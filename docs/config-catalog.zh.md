@@ -479,7 +479,7 @@ export type Config = LocalConfig
 ## `@deepseek-ai/dsh-client-connection`
 
 - `inject`: `credentials`
-- `source`: [`packages/client/connection/src/index.ts:96`](../packages/client/connection/src/index.ts)
+- `source`: [`packages/client/connection/src/index.ts:98`](../packages/client/connection/src/index.ts)
 
 ```ts config-catalog
 /** Browser authentication, request limits, and connection recovery configuration. */
@@ -493,6 +493,12 @@ export interface ConnectionConfig {
    * an entry here. A non-canonical or non-bare authority fails plugin load.
    */
   trustedHosts?: string[]
+  /**
+   * How requests beyond the Host/Origin fence authenticate: `token` (default)
+   * requires the persistent browser cookie, while `trust-network` admits every
+   * request the fence accepts without one.
+   */
+  authMode?: ConnectionAuthMode
   /** Absolute browser and API cookie lifetime in days. Default: 30. */
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
@@ -515,6 +521,9 @@ export interface ConnectionRecoveryConfig {
   /** Deadline in ms for readiness, including physical connection setup. Default: 15000. */
   generationReadyTimeoutMs?: number
 }
+
+/** How admitted requests authenticate: persistent browser token (default), or Host trust alone. */
+export type ConnectionAuthMode = 'token' | 'trust-network'
 ```
 <!-- END GENERATED config-catalog:@deepseek-ai/dsh-client-connection -->
 

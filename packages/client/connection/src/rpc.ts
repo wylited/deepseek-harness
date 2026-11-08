@@ -120,6 +120,9 @@ export type PeerAdmission =
   | { readonly peer: PeerScope }
   | { readonly rejection: 401 | 403 }
 
+/** How admitted requests authenticate: persistent browser token (default), or Host trust alone. */
+export type ConnectionAuthMode = 'token' | 'trust-network'
+
 /** Socket admission claims API ownership until its carrier calls release, including failed upgrades. */
 export type ConnectionAdmission =
   | {

@@ -18,6 +18,7 @@ import { Peer } from './peer.ts'
 import type {
   PeerAdmission,
   ConnectionAdmission,
+  ConnectionAuthMode,
   ConnectionIndexRequest,
   ConnectionIndexResponse,
   ConnectionFetchRoute,
@@ -83,11 +84,13 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * @param ctx - owning Connection plugin context.
    * @param trustedHosts - deployment authorities accepted by the Host/Origin fence.
    * @param browserAuth - process token and persistent browser-session owner.
+   * @param authMode - `token` (default) requires the browser cookie; `trust-network` admits any request passing the Host/Origin fence.
    */
   constructor(
     ctx: Context,
     private readonly trustedHosts: readonly string[],
     private readonly browserAuth: BrowserAuth,
+    private readonly authMode: ConnectionAuthMode = 'token',
   ) {
     super(ctx, 'connection')
     this.owner = ctx
@@ -128,6 +131,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
   /** Browser requests share an owner Peer; API HTTP does not depend on an attached socket. */
   admit(request: ConnectionTrustRequest): PeerAdmission {
     if (!this.isTrusted(request)) return { rejection: 403 }
+    if (this.authMode === 'trust-network') return { peer: this.browserPeer }
     if (this.disposed) return { rejection: 401 }
     const secure = this.owner.get('webServer')?.protocol === 'https:'
     if (this.browserAuth.isAuthenticated(request, secure)) return { peer: this.browserPeer }
@@ -189,8 +193,11 @@ export class HostConnectionService extends Service implements HostConnectionHand
 
   /**
    * Authenticate an index request; native TLS listeners mint Secure cookies.
+   * Under `trust-network`, a trusted Host admits the index directly so a stale
+   * bookmarked `?token=` link cannot strand the page on a 401 exchange.
    */
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean {
+    if (this.authMode === 'trust-network' && this.isTrusted(request)) return true
     return this.browserAuth.authorizeIndex(request, response, this.ctx.get('webServer')?.protocol === 'https:')
   }
 

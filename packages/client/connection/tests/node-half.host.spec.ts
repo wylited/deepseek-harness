@@ -169,6 +169,23 @@ describe('connection node half', () => {
     } finally { await guard.dispose(); await dispose() }
   })
 
+  it('trust-network admits a trusted-Host request without a cookie and still rejects an untrusted Host', async () => {
+    const { routes, connection, dispose } = await mounted({ trustedHosts: ['harness.example'], authMode: 'trust-network' })
+    try {
+      // Trusted Hosts skip the ?token= exchange, so a stale bookmarked link cannot strand on a 401.
+      expect(connection.authorizeIndex(
+        fakeRequest({ host: 'harness.example' }, '/?token=stale'),
+        fakeResponse().response,
+      )).toBe(true)
+      const admitted = fakeResponse()
+      await routes[0]!.handler(fakeRequest({ host: 'harness.example' }), admitted.response)
+      expect(admitted.state.status).toBe(404)
+      const forbidden = fakeResponse()
+      await routes[0]!.handler(fakeRequest({ host: 'evil.example' }), forbidden.response)
+      expect(forbidden.state.status).toBe(403)
+    } finally { await dispose() }
+  })
+
   it('awaits delegated response transfer before releasing the admission listener', async () => {
     const { ctx, routes, connection, dispose } = await mounted()
     const entered = Promise.withResolvers<undefined>()
