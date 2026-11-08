@@ -131,8 +131,8 @@ export class HostConnectionService extends Service implements HostConnectionHand
   /** Browser requests share an owner Peer; API HTTP does not depend on an attached socket. */
   admit(request: ConnectionTrustRequest): PeerAdmission {
     if (!this.isTrusted(request)) return { rejection: 403 }
-    if (this.authMode === 'trust-network') return { peer: this.browserPeer }
     if (this.disposed) return { rejection: 401 }
+    if (this.authMode === 'trust-network') return { peer: this.browserPeer }
     const secure = this.owner.get('webServer')?.protocol === 'https:'
     if (this.browserAuth.isAuthenticated(request, secure)) return { peer: this.browserPeer }
     const id = this.browserAuth.authenticateApi(request, secure)
@@ -197,7 +197,7 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * bookmarked `?token=` link cannot strand the page on a 401 exchange.
    */
   authorizeIndex(request: ConnectionIndexRequest, response: ConnectionIndexResponse): boolean {
-    if (this.authMode === 'trust-network' && this.isTrusted(request)) return true
+    if (this.authMode === 'trust-network' && !this.disposed && this.isTrusted(request)) return true
     return this.browserAuth.authorizeIndex(request, response, this.ctx.get('webServer')?.protocol === 'https:')
   }
 
