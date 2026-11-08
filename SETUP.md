@@ -92,3 +92,33 @@ publishes are just `git push`.
 non-empty value of that variable hard-disables the `session-telemetry-otel`
 bundle row regardless of `DSH_TELEMETRY_MODE`.
 
+## Homelab deployment — ai.ts.wyli.tech (warden)
+
+The fork self-deploys to warden-arch as a NixOS service (`nix/module.nix`,
+fleet input `github:wylited/deepseek-harness/wyli`):
+
+- **Serving**: caddy fronts `https://ai.ts.wyli.tech` → `127.0.0.1:3080` on
+  warden (wildcard `ts.wyli.tech` LE cert, `wyli.ingress.routes`). Tailnet
+  members only — **no token**: the connection plugin runs
+  `authMode: trust-network`, so any request passing the host fence
+  (loopback/bind-IP/trustedHosts + same-origin) is admitted without the
+  browser cookie. Untrusted Hosts still 403.
+- **State**: `/var/lib/dsh` — `src/` is a clone of the fork (branch `wyli`),
+  `node/` a pinned node v24.9.0 (the native addon rejects ≥24.21),
+  `home/` is `DSH_HOME` (profile, sessions, ledger).
+- **API keys**: `ssh warden sudoedit /etc/nix/dsh-env` — fill
+  `ZAI_API_KEY=` / `ZCODE_API_KEY=` (and optionally
+  `PERPLEXITY_SESSION_TOKEN=` for the perplexity-web plugin), then
+  `sudo systemctl restart dsh`. The service starts fine without keys
+  (providers degraded) — the file is optional (`EnvironmentFile=-`).
+- **Auto-update**: `dsh-update.timer` (daily ±20m) fast-forwards `src/`
+  to `origin/wyli`, rebuilds the branded client
+  (`DSH_CLIENT_COMMIT_HASH=wyli`), and restarts the service — only on
+  fast-forward, never reset. Pushing this repo to `fork` is therefore the
+  whole deploy: warden picks it up on the next timer tick (or
+  `sudo systemctl start dsh-update`).
+- **Redeploy the service definition** (after `nix/module.nix` changes):
+  edit `~/research/homelab/config` (input `dsh`, warden import, ingress
+  route), push, then on warden:
+  `cd ~/Repos/nix-config && git pull --rebase origin main && sudo nixos-rebuild switch --flake 'path:/home/wyli/Repos/nix-config#warden' --impure`.
+
