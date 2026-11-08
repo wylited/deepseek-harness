@@ -57,7 +57,10 @@ export function repositoryCommitHash(root: string, environment: NodeJS.ProcessEn
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
   }).trim()
-  if (!/^[0-9a-f]{7,40}$/iu.test(value)) {
+  // Fork delta (branch wyli): accept the literal `wyli` brand sentinel so the
+  // local-profile build can brand artifacts as `<version>-wyli` instead of a
+  // commit prefix.
+  if (!/^(?:wyli|[0-9a-f]{7,40})$/iu.test(value)) {
     throw new Error(`${CLIENT_COMMIT_HASH_VARIABLE} must be a Git commit hash; got ${JSON.stringify(value)}`)
   }
   return value.slice(0, 7).toLowerCase()
@@ -124,7 +127,9 @@ export function repositoryClientBuildEnvironment(
   delete inherited.DSH_CLIENT_COMMIT_HASH
   delete inherited.DSH_CLIENT_GIT_DIRTY
   delete inherited.DSH_CLIENT_VERSION
-  const dirty = repositoryGitDirty(root)
+  // Fork delta (branch wyli): an explicit `DSH_CLIENT_GIT_DIRTY=false` opts out
+  // of git-derived dirty branding — a personal fork's tree is normally dirty.
+  const dirty = environment.DSH_CLIENT_GIT_DIRTY === 'false' ? false : repositoryGitDirty(root)
   return {
     ...inherited,
     DSH_CLIENT_COMMIT_HASH: repositoryCommitHash(root, environment),

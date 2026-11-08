@@ -13,7 +13,11 @@
 #
 # Usage: ./dsh headless "Reply with exactly: OK"   (one-shot task)
 #        ./dsh web --no-open                       (Web UI)
-root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+unset CDPATH
+root=$(cd -- "$(dirname -- "$0")" && pwd)
 PATH="$root/.node/v24.9.0/bin:$PATH"
 export PATH
+# Telemetry opt-out: any non-empty DSH_TELEMETRY_DISABLED hard-disables the
+# session-telemetry-otel row, regardless of DSH_TELEMETRY_MODE.
+export DSH_TELEMETRY_DISABLED=1
 DSH_HOME="$root/.dsh-home" DSH_AGENTS_HOME="$root/.dsh-home/agents" exec pnpm dsh "$@"

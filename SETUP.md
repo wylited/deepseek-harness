@@ -54,3 +54,41 @@ and use the freshly printed tokenized URL.
 One-time preparation after a fresh clone: `pnpm install && pnpm run build`
 (Typert host bundles and the native runtime are required before any profile
 boots).
+
+## Fork maintenance
+
+This checkout is a personal fork of `deepseek-ai/deepseek-harness` (branch
+`wyli`; `origin` points at upstream). It is synced with **merge commits, not
+rebases**: upstream history is merge-commit style, force-push risk is low,
+and rebasing would rewrite local commits. The repo config backs this up with
+`branch.wyli.rebase=false` plus `rerere.enabled=true` /
+`rerere.autoUpdate=true`, so git remembers how each recurring conflict was
+resolved and re-applies the resolution automatically on future merges.
+Ask the assistant to "rebase/update the fork" — the flow is: `git fetch
+origin` → `git merge origin/master` → if `packages/client` or `packages/web`
+changed, rebuild the client (next paragraph) → restart `dsh web`.
+
+**Version branding** — build outputs are untracked, so they go stale on any
+client/web change. The branded rebuild is one command (no wrapper script; the
+assistant runs it on request):
+
+```sh
+DSH_BUILD_CLIENT_PROFILE=local DSH_CLIENT_VERSION=0.2.2-rc.1 \
+DSH_CLIENT_COMMIT_HASH=wyli DSH_CLIENT_GIT_DIRTY=false pnpm run build
+```
+
+The `local` profile makes `scripts/client-build-environment.ts` keep the
+explicit values instead of deriving them from git; the web sidebar then
+renders `VERSION-HASH` as `0.2.2-rc.1-wyli` (GIT_DIRTY pinned false → no
+`-dirty` suffix).
+
+**Backup remote** — the fork is published at `github.com/wylited/deepseek-harness`
+(remote `fork`, public). Git is wired asymmetrically: `git pull` merges from
+**upstream** (`origin/master`), `git push` publishes the `wyli` branch to
+**fork** (`branch.wyli.pushRemote = fork`). First push already happened; later
+publishes are just `git push`.
+
+**Telemetry** — disabled: `./dsh` exports `DSH_TELEMETRY_DISABLED=1`, and any
+non-empty value of that variable hard-disables the `session-telemetry-otel`
+bundle row regardless of `DSH_TELEMETRY_MODE`.
+
