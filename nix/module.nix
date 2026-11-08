@@ -453,7 +453,9 @@ let
       "LD_LIBRARY_PATH=${gccLib}"
       "PATH=${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin"
     ];
-    WorkingDirectory = src;
+    # '-' prefix: the src clone does not exist on first boot — ExecStartPre's
+    # provision step creates it; systemd then chdirs for ExecStart.
+    WorkingDirectory = "-${src}";
     ExecStartPre = "${pkgs.util-linux}/bin/flock ${lockFile} ${provisionScript}";
     # Same boot the repo's ./dsh wrapper performs (pnpm dsh = node --import
     # tsx/esm apps/cli/src/bin.ts); the trust fence comes from the profile.
