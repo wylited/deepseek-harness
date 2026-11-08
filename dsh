@@ -1,0 +1,19 @@
+#!/bin/sh
+# dsh — run this checkout's dsh with ALL state confined to the repo dir.
+#
+# Why the PATH prefix: dsh's profile boot probes Node's module-loader internals
+# through node-addon-require-builtin, whose prebuilt darwin-arm64 binding
+# rejects Node >= 24.10-era codegen ("Unsupported/no-getter"); Node 24.9.0 is
+# vendored at .node/v24.9.0 and must be the `node` that runs the CLI.
+#
+# Why DSH_HOME/DSH_AGENTS_HOME: they are bootstrap-only environment variables
+# (a .env file cannot set them), so they are exported here, in the ambient
+# environment. Everything dsh writes — profiles, sessions, settings.yaml,
+# logs, cache — lands under .dsh-home/ instead of ~/.dsh.
+#
+# Usage: ./dsh headless "Reply with exactly: OK"   (one-shot task)
+#        ./dsh web --no-open                       (Web UI)
+root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PATH="$root/.node/v24.9.0/bin:$PATH"
+export PATH
+DSH_HOME="$root/.dsh-home" DSH_AGENTS_HOME="$root/.dsh-home/agents" exec pnpm dsh "$@"
