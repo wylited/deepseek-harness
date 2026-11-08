@@ -1,4 +1,4 @@
-/* wyli-restyle stylesheet source. ./build.mjs compiles this file into the
+/* restyle stylesheet source. ./build.mjs compiles this file into the
  * client bundle, replacing the __ATKINSON_*__ url() placeholders with base64
  * data URLs so the host only serves lib/client.js — the revisioned /plugins
  * asset route needs the repo build preset, which this standalone package

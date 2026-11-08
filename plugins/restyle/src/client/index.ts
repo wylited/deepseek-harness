@@ -1,5 +1,5 @@
 /**
- * wyli-restyle, browser half. Three jobs, in dependency order:
+ * restyle, browser half. Three jobs, in dependency order:
  *
  * 1. ayu-light tint — an `overrideTokens` layer over the built-in light
  *    palette. Token names mirror the light `body` block of
@@ -25,7 +25,7 @@ import { RESTYLE_CSS } from './restyle-css.generated.ts'
 export const inject = ['theme']
 
 /** Override-layer identity for the ayu-light alias tint. */
-const TOKEN_SOURCE = 'wyli-restyle/ayu-light'
+const TOKEN_SOURCE = 'restyle/ayu-light'
 
 /**
  * ayu-light alias tint. Light values: ayu palette (bg #fafafa, fg #5c6166,
@@ -78,7 +78,7 @@ const AYU_TOKENS: Record<string, { light: string; dark: string }> = {
  * @param ctx - Client root context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.theme.overrideTokens(TOKEN_SOURCE, AYU_TOKENS), 'wyli-restyle: ayu token layer')
+  ctx.effect(() => ctx.theme.overrideTokens(TOKEN_SOURCE, AYU_TOKENS), 'restyle: ayu token layer')
 
   ctx.effect(() => {
     let timer: number | undefined
@@ -122,17 +122,17 @@ export function apply(ctx: ClientContext): void {
       observer?.disconnect()
       off()
     }
-  }, 'wyli-restyle: theme lock')
+  }, 'restyle: theme lock')
 
   if (typeof document === 'undefined') return
   ctx.effect(() => {
     const tag = document.createElement('style')
-    tag.dataset.plugin = 'wyli-restyle'
-    tag.dataset.pluginCss = 'wyli-restyle/restyle.css'
+    tag.dataset.plugin = 'restyle'
+    tag.dataset.pluginCss = 'restyle/restyle.css'
     tag.textContent = RESTYLE_CSS
     document.head.appendChild(tag)
     return () => {
       tag.remove()
     }
-  }, 'wyli-restyle: restyle stylesheet')
+  }, 'restyle: restyle stylesheet')
 }

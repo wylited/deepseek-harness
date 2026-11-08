@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib",
+    "declarationDir": "lib/types",
+    // The base file maps every @deepseek-ai/* to package SOURCES, which would
+    // drag the whole repo graph under this rootDir. Empty map: the peers
+    // resolve through node_modules links to their built lib/types instead.
+    "paths": {}
+  },
+  "include": [
+    "src"
+  ]
+}

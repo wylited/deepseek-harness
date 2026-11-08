@@ -1,0 +1,8 @@
+# Perplexity web-search provider. The row carries no config on purpose: the
+# plugin's schema defaults (`timeoutMs: 60000`, model from `$PI_PERPLEXITY_MODEL`
+# or `experimental`) apply, and a config value here would pin the model and beat
+# the env fallback. Select the provider on the web seam from the profile's own
+# patch layer: `- id: web` / `config: { searchProvider: perplexity-web }`.
+- insert:
+    - id: perplexity-web
+      name: perplexity-web

@@ -1,4 +1,4 @@
-window.__ModuleLoader__.load({ id: "wyli-restyle", factory: (require) => {
+window.__ModuleLoader__.load({ id: "restyle", factory: (require) => {
 var module = { exports: {} };
 var exports = module.exports;
 "use strict";
@@ -29,7 +29,7 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/client/restyle-css.generated.ts
-var RESTYLE_CSS = `/* wyli-restyle stylesheet source. ./build.mjs compiles this file into the
+var RESTYLE_CSS = `/* restyle stylesheet source. ./build.mjs compiles this file into the
  * client bundle, replacing the __ATKINSON_*__ url() placeholders with base64
  * data URLs so the host only serves lib/client.js \u2014 the revisioned /plugins
  * asset route needs the repo build preset, which this standalone package
@@ -84,7 +84,7 @@ var RESTYLE_CSS = `/* wyli-restyle stylesheet source. ./build.mjs compiles this 
 
 // src/client/index.ts
 var inject = ["theme"];
-var TOKEN_SOURCE = "wyli-restyle/ayu-light";
+var TOKEN_SOURCE = "restyle/ayu-light";
 var AYU_TOKENS = {
   // Warm paper and surface layers.
   "--dsw-alias-bg-base": { light: "#fafafa", dark: "rgb(21, 21, 23)" },
@@ -127,7 +127,7 @@ var AYU_TOKENS = {
   "--dsw-alias-markdown-inline-code": { light: "#ececec", dark: "rgb(41, 41, 41)" }
 };
 function apply(ctx) {
-  ctx.effect(() => ctx.theme.overrideTokens(TOKEN_SOURCE, AYU_TOKENS), "wyli-restyle: ayu token layer");
+  ctx.effect(() => ctx.theme.overrideTokens(TOKEN_SOURCE, AYU_TOKENS), "restyle: ayu token layer");
   ctx.effect(() => {
     let timer;
     const scheduleLightWrite = () => {
@@ -154,17 +154,17 @@ function apply(ctx) {
       observer?.disconnect();
       off();
     };
-  }, "wyli-restyle: theme lock");
+  }, "restyle: theme lock");
   if (typeof document === "undefined") return;
   ctx.effect(() => {
     const tag = document.createElement("style");
-    tag.dataset.plugin = "wyli-restyle";
-    tag.dataset.pluginCss = "wyli-restyle/restyle.css";
+    tag.dataset.plugin = "restyle";
+    tag.dataset.pluginCss = "restyle/restyle.css";
     tag.textContent = RESTYLE_CSS;
     document.head.appendChild(tag);
     return () => {
       tag.remove();
     };
-  }, "wyli-restyle: restyle stylesheet");
+  }, "restyle: restyle stylesheet");
 }
 return module.exports; } });

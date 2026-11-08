@@ -1,4 +1,4 @@
-# wyli-restyle
+# restyle
 
 Personal web-UI restyle plugin for the wyli fork. Untracked personal state
 (the profile mount) lives in `.dsh-home/`; everything in this directory is
@@ -15,7 +15,7 @@ tracked and committed, built output included.
   user's transient write — the surface whose write is still in flight folds its
   stale response back over ours. Letting it settle makes this the last writer,
   so the durable value and every echo of it end at light.
-- **ayu-light tint** — an `overrideTokens('wyli-restyle/ayu-light', …)` layer
+- **ayu-light tint** — an `overrideTokens('restyle/ayu-light', …)` layer
   over the built-in light palette: warm paper `#fafafa`, layers `#f3f4f5`,
   text `#5c6166`, orange accent `#ff9940` (primary/info buttons, links,
   selection, user bubble). Dark values repeat the built-in dark sheet so the
@@ -57,21 +57,21 @@ bundle, so `lib/` is self-contained and the host never needs the revisioned
 `/plugins` asset route.
 
 `lib/` is matched by the repo-root `.gitignore` rule (`lib/`), so committing
-rebuilds needs `git add -f plugins/wyli-restyle/lib`. The committed build is
+rebuilds needs `git add -f plugins/restyle/lib`. The committed build is
 current; no rebuild is needed after a pull.
 
 ## Mount (already applied on this machine)
 
 ```
-./dsh plugin --profile web add "$PWD/plugins/wyli-restyle"
+./dsh plugin --profile web add "$PWD/plugins/restyle"
 ```
 
 plus a row in `.dsh-home/profiles/web/cordis.patch.yml` (untracked):
 
 ```yaml
 - insert:
-    - id: wyli-restyle
-      name: wyli-restyle
+    - id: restyle
+      name: restyle
 ```
 
 Verify with `./dsh --profile web --dump-config` — the row must be present and

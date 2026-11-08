@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build wyli-restyle into the two files the host serves:
+ * Build restyle into the two files the host serves:
  *
  *   lib/index.js   — node half, plain ESM
  *   lib/client.js  — browser half, in the host's lazy-CJS factory form:
