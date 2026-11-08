@@ -96,6 +96,68 @@ export const DASHBOARD_CSS = `
 .wd-feed { display: flex; flex-direction: column; }
 .wd-feeditem { border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-border-l2, #e5e7e8) 55%, transparent); }
 .wd-feeditem:last-child { border-bottom-color: transparent; }
+
+/* Workspace groups: a text-minimal tree — thin rules between top-level
+ * groups, a faint left rule and indent for nested children. */
+.wd-group + .wd-group { border-top: 1px solid color-mix(in srgb, var(--dsw-alias-border-l2, #e5e7e8) 55%, transparent); }
+.wd-group-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px 4px; }
+.wd-group-caret {
+  flex: none;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary, #8a9199);
+  cursor: pointer;
+}
+.wd-group-caret:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+.wd-group-name {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+span.wd-group-name { cursor: default; }
+button.wd-group-name:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+.wd-group-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8a9199);
+  font-variant-numeric: tabular-nums;
+}
+.wd-group-count[data-running] { color: var(--dsw-alias-brand-primary, #ff9940); }
+.wd-group-more {
+  border: 0;
+  background: none;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8a9199);
+  cursor: pointer;
+}
+.wd-group-more:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+.wd-group-kids {
+  margin: 2px 0 6px 9px;
+  padding-left: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--dsw-alias-border-l2, #e5e7e8) 60%, transparent);
+}
+.wd-group-kids .wd-group + .wd-group { border-top: 0; }
+.wd-header-path {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8a9199);
+}
 .wd-row {
   display: flex;
   align-items: center;

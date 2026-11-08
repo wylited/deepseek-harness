@@ -1,13 +1,20 @@
 /**
- * The dashboard pages. Two main panels:
+ * The dashboard pages. Three panel families:
  *
  * - `DashboardPage` (panel id `dashboard`) — the ongoing agents feed as the
- *   main event: at most three running sessions, each with a live status
- *   line (the newest assistant words, or the tool call in flight) streamed
- *   from a passive per-session event tail — zero polling. A session blocked
- *   on an `ask_user_question` call shows an inline answer box that replies
- *   through the question RPC without opening the session. Below the feed,
+ *   main event: every running session (uncapped), padded with the most
+ *   recent idle sessions to at most five rows, grouped by workspace with
+ *   child workspaces (git worktrees, `.dsh-work` temp workspaces) nested
+ *   under their repo, each row carrying a live status line (the newest
+ *   assistant words, or the tool call in flight) streamed from a passive
+ *   per-session event tail — zero polling. A session blocked on an
+ *   `ask_user_question` call shows an inline answer box that replies
+ *   through the question RPC without opening the session. Clicking a
+ *   workspace header opens the workspace's own panel. Below the feed,
  *   the trailing-year heatmap, fed by a slow 60-second overview read.
+ * - `WorkspacePage` (panel id `workspace-<slug>`, in WorkspacePage.tsx) —
+ *   the per-workspace sub-dashboard: its sessions, child workspaces, and
+ *   the same inline answers, with a back control to the landing.
  * - `UsagePage` (panel id `usage-stats`) — the statistics: headline cards,
  *   the heatmap, and the per-model/per-session tables. The 20-second
  *   ledger poll lives inside this component, so it only runs while the
@@ -16,17 +23,15 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { compactTokens, fullTimeLabel, pathBase, relativeTime } from './format.ts'
+import { compactTokens, fullTimeLabel, relativeTime } from './format.ts'
 import type { DashboardOverviewView, UsageDayPoint } from '../core/view.ts'
+import {
+  FEED_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey,
+  type AgentRow, type SessionsFace, type SessionsListState, type WorkspacesFace,
+  type WorkspaceGroupNode, type WorkspaceTarget,
+} from './workspace.ts'
 
-/** The minimal runtime face of the client `sessions` service this page reads. */
-export interface SessionsFace {
-  list: {
-    subscribe(fn: () => void): () => void
-    getSnapshot(): SessionsListState
-  }
-  refreshProjections(sessionId: string): Promise<void>
-}
+export type { AgentRow, SessionsFace }
 
 /** The minimal runtime face of the generated `remote.session` facade. */
 export interface SessionRemoteFace {
@@ -62,112 +67,16 @@ export interface DashboardFace {
   sessionRemote: SessionRemoteFace | undefined
   /** Absent when the user-questions plugin is not loaded: replies prompt instead. */
   questionRemote: QuestionRemoteFace | undefined
+  /** Absent when the workspaces plugin is not loaded: grouping falls back to cwd. */
+  workspaces: WorkspacesFace | undefined
   openDashboard(): void
   openUsage(): void
+  /** Open (registering on first use) the workspace's own panel. */
+  openWorkspace(target: WorkspaceTarget): void
   /** uiWorkspace.openSession: a SessionId string is a valid SessionTarget. */
   openSession(sessionId: string): void
   fetchOverview(): Promise<DashboardOverviewView | undefined>
   version: string | undefined
-}
-
-/** The list snapshot fields the feed reads. */
-interface SessionSummaryRow {
-  /** The session identity (the `sessions.list` store keys `byId` by it). */
-  id: string
-  displayTitle?: string
-  updatedAt: number
-  running: boolean
-  blank: boolean
-  parentSessionId?: string
-  origin?: 'subagent'
-  cwd?: string
-}
-
-interface SessionsListState {
-  ids: readonly string[]
-  byId: Record<string, SessionSummaryRow>
-  phase: 'pending' | 'ready'
-  projectionsBySession: Record<string, { values: Record<string, unknown> } | undefined>
-}
-
-/** One feed row after projection, labels already display-ready. */
-interface AgentRow {
-  sessionId: string
-  label: string
-  updatedAt: number
-  running: boolean
-  subagent: boolean
-  parentLabel: string | undefined
-  model: string | undefined
-}
-
-/** How many running agents the feed shows at most. */
-const ACTIVE_CAP = 3
-
-/** Workspace basenames that read as noise on a personal page: this repo's
- *  checkout dir. The parent directory names the checkout more usefully. */
-const NOISY_BASENAME = 'dsh'
-
-/** Read the model a session's durable selection names (next, then last used). */
-function modelOfProjection(values: Record<string, unknown> | undefined): string | undefined {
-  if (values === undefined) return undefined
-  const selection = values['modelSelection']
-  if (typeof selection !== 'object' || selection === null) return undefined
-  const read = (candidate: unknown): string | undefined => {
-    if (typeof candidate !== 'object' || candidate === null || !('model' in candidate)) return undefined
-    return typeof candidate.model === 'string' && candidate.model !== '' ? candidate.model : undefined
-  }
-  const next = 'next' in selection ? read(selection.next) : undefined
-  const lastUsed = 'lastUsed' in selection ? read(selection.lastUsed) : undefined
-  return next ?? lastUsed
-}
-
-/** A workspace path's usable name: its basename, unless that is the bare
- *  repo dir (`dsh`), in which case the parent directory speaks instead. */
-function neutralBase(cwd: string | undefined): string | undefined {
-  const base = pathBase(cwd)
-  if (base === undefined || base.toLowerCase() !== NOISY_BASENAME) return base
-  const trimmed = cwd!.replace(/\/+$/, '')
-  const cut = trimmed.lastIndexOf('/')
-  return cut > 0 ? pathBase(trimmed.slice(0, cut)) : undefined
-}
-
-/** The label a row shows: the session title, else a workspace name that is
- *  not the bare repo dir, else a truncated session id. */
-function displayLabel(title: string | undefined, cwd: string | undefined, id: string): string {
-  if (title !== undefined && title !== '' && title !== id && title.toLowerCase() !== NOISY_BASENAME) return title
-  return neutralBase(cwd) ?? `${id.slice(0, 10)}…`
-}
-
-/** Project the raw list snapshot into feed rows (uncapped, unsorted). */
-function projectRows(state: SessionsListState): AgentRow[] {
-  const rows: AgentRow[] = []
-  for (const id of state.ids) {
-    const summary = state.byId[id]
-    if (summary === undefined) continue
-    if (summary.blank && !summary.running) continue
-    const parent = summary.parentSessionId === undefined ? undefined : state.byId[summary.parentSessionId]
-    rows.push({
-      sessionId: summary.id,
-      label: displayLabel(summary.displayTitle, summary.cwd, summary.id),
-      updatedAt: summary.updatedAt,
-      running: summary.running,
-      subagent: summary.origin === 'subagent',
-      parentLabel: parent === undefined
-        ? undefined
-        : displayLabel(parent.displayTitle, parent.cwd, parent.id),
-      model: modelOfProjection(state.projectionsBySession[id]?.values),
-    })
-  }
-  return rows
-}
-
-/** The running agents: latest first, capped. */
-function activeRows(state: SessionsListState): AgentRow[] {
-  return projectRows(state)
-    .filter(row => row.running)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, ACTIVE_CAP)
 }
 
 // --- live status lines ------------------------------------------------------
@@ -294,13 +203,13 @@ function useSessionTail(face: DashboardFace, sessionId: string): string | undefi
 // --- inline answers ---------------------------------------------------------
 
 /** One pending `ask_user_question` call read from the session list summary. */
-interface PendingQuestionInfo {
+export interface PendingQuestionInfo {
   callId: string | undefined
   questions: readonly { id: string; question: string }[]
 }
 
 /** First open question of a session, from its summary projection values. */
-function pendingQuestionOf(values: Record<string, unknown> | undefined): PendingQuestionInfo | undefined {
+export function pendingQuestionOf(values: Record<string, unknown> | undefined): PendingQuestionInfo | undefined {
   if (values === undefined) return undefined
   const view: unknown = values['userQuestions']
   if (typeof view !== 'object' || view === null || !('active' in view)) return undefined
@@ -380,7 +289,7 @@ function InlineAnswer({ face, sessionId, question }: {
 }
 
 /** A shared `Date.now()` ticker so relative labels move without re-render storms. */
-function useNowTicker(intervalMs: number): number {
+export function useNowTicker(intervalMs: number): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const timer = window.setInterval(() => { setNow(Date.now()) }, intervalMs)
@@ -409,7 +318,8 @@ function VersionChip({ version }: { version: string | undefined }) {
   )
 }
 
-function FeedItem({ row, now, face, question }: {
+/** One agent row: status dot, label, badges, live tail, inline answer. */
+export function FeedItem({ row, now, face, question }: {
   row: AgentRow
   now: number
   face: DashboardFace
@@ -443,14 +353,120 @@ function FeedItem({ row, now, face, question }: {
   )
 }
 
-/** The landing panel: the agents feed, then the year heatmap. */
+/**
+ * One collapsible workspace group: header (caret, label, running count),
+ * its rows, then nested child workspaces indented under a thin rule. The
+ * label opens the workspace's own panel; the caret toggles collapse
+ * (session-local state, never persisted). Reused by the workspace panel
+ * for child workspaces.
+ */
+export function WorkspaceGroup({ node, depth, now, face, state, collapsed, collapsedSet, onToggle }: {
+  node: WorkspaceGroupNode
+  depth: number
+  now: number
+  face: DashboardFace
+  state: SessionsListState
+  /** Whether this node renders collapsed. */
+  collapsed: boolean
+  /** The shared collapse-key set children read. */
+  collapsedSet: ReadonlySet<string>
+  onToggle(key: string): void
+}) {
+  const running = node.rows.filter(row => row.running).length
+  return (
+    <div className="wd-group">
+      <div className="wd-group-head">
+        <button
+          type="button"
+          className="wd-group-caret"
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Expand' : 'Collapse'}
+          onClick={() => { onToggle(workspaceKey(node)) }}
+        >
+          {collapsed ? '▸' : '▾'}
+        </button>
+        {node.path === undefined
+          ? <span className="wd-group-name">{node.label}</span>
+          : (
+            <button
+              type="button"
+              className="wd-group-name"
+              title={`${node.path} — open its page`}
+              onClick={() => { face.openWorkspace({ slug: node.slug, path: node.path!, label: node.label }) }}
+            >
+              {node.label}
+            </button>
+          )}
+        <span className="wd-group-count" data-running={running > 0 || undefined}>
+          {running > 0 ? `${running} running` : 'idle'}
+        </span>
+      </div>
+      {!collapsed && (
+        <>
+          <div className="wd-feed">
+            {node.rows.map(row => (
+              <FeedItem
+                key={row.sessionId}
+                row={row}
+                now={now}
+                face={face}
+                question={pendingQuestionOf(state.projectionsBySession[row.sessionId]?.values)}
+              />
+            ))}
+          </div>
+          {node.hidden > 0 && node.path !== undefined && (
+            <button
+              type="button"
+              className="wd-group-more"
+              onClick={() => { face.openWorkspace({ slug: node.slug, path: node.path!, label: node.label }) }}
+            >
+              +{node.hidden} sleeping — open {node.label}
+            </button>
+          )}
+          {node.children.length > 0 && (
+            <div className="wd-group-kids">
+              {node.children.map(child => (
+                <WorkspaceGroup
+                  key={workspaceKey(child)}
+                  node={child}
+                  depth={depth + 1}
+                  now={now}
+                  face={face}
+                  state={state}
+                  collapsed={collapsedSet.has(workspaceKey(child))}
+                  collapsedSet={collapsedSet}
+                  onToggle={onToggle}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+/** The landing panel: the grouped agents feed, then the year heatmap. */
 export function DashboardPage(face: DashboardFace) {
   const state = useSyncExternalStore(face.sessions.list.subscribe, face.sessions.list.getSnapshot)
+  const workspaces = useOptionalStore(face.workspaces?.list)
   const now = useNowTicker(30_000)
   const [view, setView] = useState<DashboardOverviewView | undefined>(undefined)
   const refreshAttempted = useRef(new Set<string>())
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
 
-  const rows = useMemo(() => activeRows(state), [state])
+  // The feed always shows every running agent; the most recent idle ones
+  // pad the rest of the FEED_ROW_CAP budget. Grouping keeps the whole set
+  // so per-workspace counts and the "+sleeping" notes stay honest.
+  const groups = useMemo(
+    () => buildWorkspaceGroups(
+      projectRows(state, workspaces.items),
+      workspaces.items,
+      { cap: FEED_ROW_CAP },
+    ),
+    [state, workspaces],
+  )
+  const rows = useMemo(() => groups.roots.flatMap(node => collapseRows(node)), [groups])
 
   // Cold model names arrive through the projections read (same RPC the
   // workspace list uses for cold titles); one attempt per session per mount.
@@ -478,6 +494,15 @@ export function DashboardPage(face: DashboardFace) {
     }
   }, [face])
 
+  const toggle = (key: string): void => {
+    setCollapsed(previous => {
+      const next = new Set(previous)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   return (
     <div className="wd-page">
       <header className="wd-header">
@@ -489,21 +514,25 @@ export function DashboardPage(face: DashboardFace) {
       <section className="wd-section">
         <div className="wd-section-head">
           <h2 className="wd-section-title">Ongoing agents</h2>
-          <span className="wd-section-note">running now · click a row to open</span>
+          <span className="wd-section-note">all active, recent idles pad to {FEED_ROW_CAP} · a workspace name opens its page</span>
         </div>
         {state.phase === 'pending'
           ? <div className="wd-empty">Loading sessions…</div>
           : rows.length === 0
             ? <div className="wd-zzz" role="status">💤 all agents sleeping</div>
             : (
-              <div className="wd-feed">
-                {rows.map(row => (
-                  <FeedItem
-                    key={row.sessionId}
-                    row={row}
+              <div className="wd-groups">
+                {groups.roots.map(node => (
+                  <WorkspaceGroup
+                    key={workspaceKey(node)}
+                    node={node}
+                    depth={0}
                     now={now}
                     face={face}
-                    question={pendingQuestionOf(state.projectionsBySession[row.sessionId]?.values)}
+                    state={state}
+                    collapsed={collapsed.has(workspaceKey(node))}
+                    collapsedSet={collapsed}
+                    onToggle={toggle}
                   />
                 ))}
               </div>
@@ -512,6 +541,11 @@ export function DashboardPage(face: DashboardFace) {
       {view !== undefined && <HeatmapSection view={view} />}
     </div>
   )
+}
+
+/** The rows a node actually shows: its own plus every shown descendant's. */
+function collapseRows(node: WorkspaceGroupNode): readonly AgentRow[] {
+  return [...node.rows, ...node.children.flatMap(collapseRows)]
 }
 
 /** One headline card. */

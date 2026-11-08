@@ -44,17 +44,25 @@ function isLoopbackAuthority(authority: string | undefined): boolean {
   }
 }
 
+/** Whether an HTTP `Host` header (`host[:port]`) names the loopback host. */
+function isLoopbackHostAuthority(host: string | undefined): boolean {
+  return isLoopbackAuthority(host === undefined ? undefined : `http://${host}`)
+}
+
 /**
  * Whether this request may read the dashboard overview: a loopback socket
  * (the local browser and anything on this machine), or a request carrying
- * the browser same-origin markers toward a loopback authority — never a
- * proxied request.
+ * the browser same-origin markers whose `Host` also names the loopback host —
+ * never a proxied request. The markers are client-supplied, so on a
+ * non-loopback-bound listener they can be forged by any peer that can open a
+ * TCP connection; the Host check keeps that arm loopback-only too.
  */
 export function isDashboardRequestAllowed(request: IncomingMessage): boolean {
   if (isProxiedRequest(request)) return false
   if (isLoopbackAddress(request.socket.remoteAddress)) return true
   const site = request.headers['sec-fetch-site']
   if (site === 'same-origin' || site === 'same-site') {
+    if (!isLoopbackHostAuthority(request.headers.host)) return false
     return isLoopbackAuthority(request.headers.origin) || isLoopbackAuthority(request.headers.referer)
   }
   return false

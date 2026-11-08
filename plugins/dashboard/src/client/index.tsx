@@ -1,9 +1,10 @@
 /**
- * dashboard, client half. Registers two main panels — the landing page
- * (`dashboard`, the ongoing agents feed with live status lines, inline
- * answers, and the year heatmap) and the usage statistics page
- * (`usage-stats`) — plus the sidebar brand slots, the usage sidebar entry,
- * the landing selection, and the stylesheet.
+ * dashboard, client half. Registers the main panels — the landing page
+ * (`dashboard`, the workspace-grouped agents feed with live status lines,
+ * inline answers, and the year heatmap), the usage statistics page
+ * (`usage-stats`), and per-workspace sub-dashboards (`workspace-<slug>`,
+ * registered on first open) — plus the sidebar brand slots, the usage
+ * sidebar entry, the landing selection, and the stylesheet.
  * @module dashboard/client
  */
 
@@ -11,7 +12,9 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { FishLogo } from './fish-logo.ts'
 import { DASHBOARD_CSS } from './dashboard-css.ts'
 import { DashboardPage, UsagePage, type DashboardFace, type QuestionRemoteFace, type SessionRemoteFace, type SessionsFace } from './DashboardPage.tsx'
+import { WorkspacePage } from './WorkspacePage.tsx'
 import type { DashboardOverviewView } from '../core/view.ts'
+import type { WorkspacesFace, WorkspaceTarget } from './workspace.ts'
 
 /** Required services: the slot registry, the layout panel store, live sessions. */
 export const inject = ['slots', 'layout', 'sessions']
@@ -120,12 +123,41 @@ export function apply(ctx: DashboardContext): void {
   const sessionRemote = tryGet<SessionRemoteFace>(ctx, 'remote.session')
   const questionRemote = tryGet<QuestionRemoteFace>(ctx, 'remote.userQuestions')
 
+  // The workspaces list powers the feed's grouping; absent, grouping falls
+  // back to each session's cwd. Like uiWorkspace, the service may load after
+  // this plugin applies — resolve lazily, retrying until it appears.
+  let resolvedWorkspaces: WorkspacesFace | undefined
+  const resolveWorkspaces = (): WorkspacesFace | undefined => {
+    if (resolvedWorkspaces === undefined) resolvedWorkspaces = tryGet<WorkspacesFace>(ctx, 'workspaces')
+    return resolvedWorkspaces
+  }
+
+  // Workspace panels register on first open (they are per-workspace), then
+  // `layout.selectPanel` — the same programmatic open the usage panel uses.
+  const workspacePanels = new Set<string>()
+
   const face: DashboardFace = {
     sessions,
     sessionRemote,
     questionRemote,
+    get workspaces() { return resolveWorkspaces() },
     openDashboard: () => { layout.selectPanel(PANEL_ID) },
     openUsage: () => { layout.selectPanel(USAGE_PANEL_ID) },
+    openWorkspace: (target: WorkspaceTarget) => {
+      const panelId = `workspace-${target.slug}`
+      if (workspacePanels.has(panelId)) {
+        layout.selectPanel(panelId)
+        return
+      }
+      workspacePanels.add(panelId)
+      ctx.slots.inject('main', function* () {
+        yield ctx.slots.register({
+          name: 'main', key: panelId,
+          inject: () => ({ ...face, workspacePath: target.path, workspaceLabel: target.label, workspaceSlug: target.slug }),
+        }, WorkspacePage)
+        layout.selectPanel(panelId)
+      })
+    },
     // uiWorkspace loads after this plugin applies; resolve at click time.
     openSession: (sessionId) => { tryGet<{ openSession(target: string): void }>(ctx, 'uiWorkspace')?.openSession(sessionId) },
     fetchOverview,
