@@ -523,6 +523,7 @@ in
       description = "dsh — web AI harness (git checkout, auto-updating)";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      wantedBy = [ "multi-user.target" ];
       serviceConfig = dshServiceConfig;
     };
 
