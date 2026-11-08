@@ -1,0 +1,27 @@
+{
+  "name": "dashboard",
+  "description": "DOOM-style personal dashboard: an active-agents feed (or the dormant horde) on the landing page, usage statistics + a full-year activity heatmap on their own page, and an in-page OPTIONS menu (palettes, accent, glyphs, CRT dressing) persisted per browser. Default landing page via the sidebar brand slots.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.0",
+    "node": ">=24.9.0"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "license": "MIT"
+}
