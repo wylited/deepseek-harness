@@ -1,0 +1,27 @@
+{
+  "name": "wyli-restyle",
+  "description": "Personal web-UI restyle: ayu-light alias tint, Atkinson Hyperlegible self-hosting, straight corners, light-only theme lock",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.0",
+    "node": ">=24.9.0"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "license": "MIT"
+}

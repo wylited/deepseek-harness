@@ -1,0 +1,51 @@
+/* wyli-restyle stylesheet source. ./build.mjs compiles this file into the
+ * client bundle, replacing the __ATKINSON_*__ url() placeholders with base64
+ * data URLs so the host only serves lib/client.js — the revisioned /plugins
+ * asset route needs the repo build preset, which this standalone package
+ * does not run. Kept as readable CSS with placeholder URLs on purpose.
+ */
+
+/* --- Atkinson Hyperlegible (self-hosted; SIL Open Font License 1.1) ----- */
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("__ATKINSON_REGULAR__") format('woff2');
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("__ATKINSON_BOLD__") format('woff2');
+}
+
+@font-face {
+  font-family: 'Atkinson Hyperlegible';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("__ATKINSON_ITALIC__") format('woff2');
+}
+
+/* --- Straight corners ---------------------------------------------------- */
+/* Collapse the shared radius scale, then catch component sheets that
+ * hardcode px radii or percentage pills with a universal reset. radius 0
+ * also makes the corner-shape superellipse token inert, so no separate
+ * corner-shape override is needed. */
+:root {
+  --dsw-radius-xs: 0px;
+  --dsw-radius-sm: 0px;
+  --dsw-radius-md: 0px;
+  --dsw-radius-lg: 0px;
+  --dsw-radius-xl: 0px;
+  --dsw-radius-panel: 0px;
+}
+
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
