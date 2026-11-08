@@ -7,8 +7,14 @@ tracked and committed, built output included.
 ## What it does
 
 - **Light only** — pins the theme preference to `light` on apply and re-asserts
-  it on every `theme/change` (setTheme is a no-op at the current preference, so
-  the lock cannot loop). Picking dark or system in Settings bounces back.
+  it on every `theme/change` that leaves light, plus a `MutationObserver` on
+  the presenter's `body[data-ds-dark-theme]` attribute (a surface that missed
+  an event can re-darken the document without a local event). The re-assertion
+  is a *delayed* (250 ms) write on purpose: the preference lives in a settings
+  document shared by several theme surfaces, and writing immediately races the
+  user's transient write — the surface whose write is still in flight folds its
+  stale response back over ours. Letting it settle makes this the last writer,
+  so the durable value and every echo of it end at light.
 - **ayu-light tint** — an `overrideTokens('wyli-restyle/ayu-light', …)` layer
   over the built-in light palette: warm paper `#fafafa`, layers `#f3f4f5`,
   text `#5c6166`, orange accent `#ff9940` (primary/info buttons, links,
@@ -49,6 +55,10 @@ browser half is emitted in the host's lazy-CJS factory form
 `packages/client/tsdown.client.ts`). Fonts become base64 data URLs inside the
 bundle, so `lib/` is self-contained and the host never needs the revisioned
 `/plugins` asset route.
+
+`lib/` is matched by the repo-root `.gitignore` rule (`lib/`), so committing
+rebuilds needs `git add -f plugins/wyli-restyle/lib`. The committed build is
+current; no rebuild is needed after a pull.
 
 ## Mount (already applied on this machine)
 
