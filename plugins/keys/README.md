@@ -12,11 +12,37 @@ that no longer exists on dsh 0.2.2-rc.1, so its activation fails.
 | Bind | Action | Works |
 |---|---|---|
 | `Cmd+P` / `Ctrl+P` | toggle the palette | anywhere in the web UI, including while the composer is focused |
+| `Cmd+K` / `Ctrl+K` | toggle global search (workspaces / sessions / messages) | anywhere; overrides dsh's native `Cmd+K` sidebar search (its `Cmd/Ctrl+Alt+K` web variant still passes through) |
 | `Alt+T` | cycle the session's thinking level off → low → high → max | anywhere |
-| `↑` / `↓` | move the selection | palette open |
-| `Enter` | run the selected entry | palette open |
-| `Esc` | close the palette | palette open |
-| click on the dimmed backdrop | close the palette | palette open |
+| `↑` / `↓` | move the selection | palette or search open |
+| `Enter` | run the selected entry / navigate to the selected result | palette or search open |
+| `Esc` | close | palette or search open |
+| click on the dimmed backdrop | close | palette or search open |
+
+## Global search (Cmd+K)
+
+The same modal in a second mode. Results are grouped under muted
+`workspaces` / `sessions` / `messages` headers; headers are not selectable, so
+`↑`/`↓` and `Enter` move and run through hits only. Workspaces and sessions are
+matched with the palette's fuzzy subsequence filter, ranked by score then last
+activity; messages use plain case-insensitive substring matching.
+
+- **workspaces** — unique workspace labels from the live session list (a cwd's
+  basename, or the parent directory when the basename is the bare repo dir —
+  same rule `plugins/dashboard` uses). Enter opens the workspace's dashboard
+  panel (`layout.selectPanel('workspace-<slug>')`, the shared panel-id
+  convention); when no such panel is registered it opens the workspace's most
+  recent session instead.
+- **sessions** — session titles + relative last activity. Enter opens the
+  session via `uiWorkspace.openSession`.
+- **messages** — full-text over message transcripts. The client first calls
+  the sanctioned `sessions.search` content index; this fork's base bundle
+  ships it disabled (`session-query-sqlite` `openAt: never`), and on failure
+  the request falls back to this plugin's host route
+  (`POST /api/keys/messages`), which scans persisted transcripts through
+  `ctx.sessionPersistence` — the 30 most recently written sessions, the last
+  800 events of each, matched line ±1 as the snippet, capped at 20 results.
+  Enter opens the matching session.
 
 ## Commands
 
@@ -49,7 +75,11 @@ typed into the composer. On Linux/Windows Alt+T is equally unclaimed.
 Everything tunable lives in the `CONFIG` object at the top of
 `src/client/index.ts`:
 
-- `paletteKey`, `cyclerKey` — the key letters for Cmd/Ctrl+`key` and Alt+`key`
+- `paletteKey`, `searchKey`, `cyclerKey` — the key letters for Cmd/Ctrl+`key`
+  (palette, search) and Alt+`key` (cycler)
+- `searchDebounceMs`, `searchWorkspaceCap`, `searchSessionCap` — search-mode
+  tuning: message-query debounce and the two client-side result caps
+  (messages are capped host-side at 20)
 - `cycleOrder`, `defaultProvider`, `defaultModel`, `seedEffort` — cycler walk
   order and the route pinned on new temp sessions
 - `recencyCap`, `recencyStorageKey` — the "recently run floats to top" list
@@ -74,8 +104,10 @@ example).
 
 ## Files
 
-- `src/index.ts` — node half: empty apply, gives the Loader a host-side row
-- `src/client/index.ts` — everything: DOM, keybinds, commands, filtering
+- `src/index.ts` — node half: registers `POST /api/keys/messages`, the
+  bounded transcript-scan fallback for message full-text search
+- `src/client/index.ts` — everything else: DOM, keybinds, commands, palette
+  and search modes, filtering
 - `build.mjs` — esbuild bundling to `lib/` in the host's lazy-CJS factory form
   (`window.__ModuleLoader__.load({ id, factory })`, same shape as
   `plugins/restyle`)

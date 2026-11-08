@@ -1,5 +1,5 @@
 /**
- * keys, browser half. Three jobs:
+ * keys, browser half. Four jobs:
  *
  * 1. Command palette (Cmd/Ctrl+P) — a self-contained modal: the fork's commands,
  *    settings/composer affordances, and free-text slash passthrough into the
@@ -8,8 +8,15 @@
  *    API that no longer exists on dsh 0.2.2-rc.1. Filtering is fuzzy
  *    (subsequence match, ranked by keyword hits), the last-executed commands
  *    float to the top, and the modal animates open/closed.
- * 2. Alt+T — cycle the current session's thinking level off→low→high→max.
- * 3. Everything degrades gracefully: every service is optional-injected.
+ * 2. Global search (Cmd/Ctrl+K) — the same modal in a search mode: workspace
+ *    labels, session titles, and host-backed full-text over message
+ *    transcripts (`sessions.search`, the Host's message-content index),
+ *    grouped under muted headers and navigated with the palette's bindings.
+ *    dsh's own session-search shortcut is Cmd/Ctrl(+Alt)+K; the capture-phase
+ *    listener below intercepts the chord before the native dispatcher's
+ *    bubble-phase handler runs (the same override path Cmd+P uses).
+ * 3. Alt+T — cycle the current session's thinking level off→low→high→max.
+ * 4. Everything degrades gracefully: every service is optional-injected.
  *
  * All user-tunable values (keybinds, defaults, selectors, timings) live in
  * CONFIG below — see README.md for the full list and how to apply changes.
@@ -19,6 +26,18 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 export const CONFIG = {
   /** Cmd/Ctrl + this key toggles the palette. */
   paletteKey: 'p',
+  /** Cmd/Ctrl + this key opens the same modal in global search mode (workspaces,
+   *  sessions, message text). dsh natively binds Cmd/Ctrl+K (desktop) and
+   *  Cmd/Ctrl+Alt+K (web) to its sidebar session search; the window-capture
+   *  listener intercepts the plain chord before that dispatcher's bubble-phase
+   *  handler runs, and the native Alt variant still works. */
+  searchKey: 'k',
+  /** Debounce before a keystroke queries the host message index. */
+  searchDebounceMs: 150,
+  /** Result caps for the search mode's client-side corpora. Messages are
+   *  capped host-side (`sessions.searchResultLimit` = 20). */
+  searchWorkspaceCap: 8,
+  searchSessionCap: 12,
   /** Alt + this key cycles the thinking level. Not Cmd+Tab: macOS captures
    *  it for app switching before the page ever sees the event (README). */
   cyclerKey: 't',
@@ -229,6 +248,132 @@ function composerInsert(text: string): void {
   document.execCommand('insertText', false, `${text} `)
 }
 
+// --- global search (Cmd+K) --------------------------------------------------
+
+/** Which personality the shared modal is in. */
+type PaletteMode = 'commands' | 'search'
+
+/** Fields the fuzzy matcher scores (commands and search hits share the shape). */
+interface FuzzyFields {
+  readonly title: string
+  readonly subtitle?: string
+  readonly keywords: readonly string[]
+}
+
+/** One selectable row of search-mode results. */
+interface SearchHit {
+  readonly title: string
+  readonly subtitle: string
+  run(ctx: KeysContext): void | Promise<void>
+}
+
+/** Search-mode rows: selectable hits plus the muted group headers between them. */
+type SearchRow = { readonly type: 'header'; readonly label: string }
+  | { readonly type: 'note'; readonly text: string }
+  | { readonly type: 'hit'; readonly hit: SearchHit }
+
+/** Minimal runtime face of the client `sessions` service (see
+ *  `packages/api/session-controller/src/client/contract/sessions.ts`). */
+interface SessionsFace {
+  list: {
+    subscribe(fn: () => void): () => void
+    getSnapshot(): SessionsListState
+  }
+  search(query: string, signal: AbortSignal): Promise<SearchRemoteResult>
+}
+
+/** The list snapshot fields search mode reads. */
+interface SessionRow {
+  readonly id: string
+  readonly displayTitle?: string
+  readonly cwd?: string
+  readonly updatedAt: number
+  readonly running: boolean
+  readonly blank: boolean
+}
+
+interface SessionsListState {
+  readonly ids: readonly string[]
+  readonly byId: Record<string, SessionRow>
+}
+
+/** The `sessions.search` result, widened to tolerate transport drift. */
+type SearchRemoteResult =
+  | { ok: true; value: { items: readonly { sessionId: string; snippet: string }[]; hasMore: boolean } }
+  | { ok: false }
+
+/** Workspace basenames that read as noise (this repo's checkout dir): the
+ *  parent directory names the workspace more usefully. Forked from
+ *  plugins/dashboard's `neutralBase` so both plugins label alike. */
+const NOISY_BASENAME = 'dsh'
+
+/** A workspace path's usable label: its basename, unless that is the bare
+ *  repo dir (`dsh`), in which case the parent directory speaks instead. */
+function workspaceLabelOf(cwd: string | undefined): string | undefined {
+  if (cwd === undefined) return undefined
+  const segments = cwd.replace(/\/+$/, '').split('/')
+  const base = segments[segments.length - 1]
+  if (base === undefined || base === '') return undefined
+  if (base.toLowerCase() !== NOISY_BASENAME) return base
+  return segments.length > 2 ? segments[segments.length - 2] : undefined
+}
+
+/** Layout panel id for a workspace label (shared `workspace-<slug>` convention:
+ *  displayLabel lowercased, non-alnum runs folded to '-'). */
+function workspacePanelId(label: string): string {
+  return `workspace-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+}
+
+/** Compact last-activity stamp for session rows. */
+function relativeTime(ts: number): string {
+  const delta = Date.now() - ts
+  if (!Number.isFinite(delta) || delta < 0) return 'just now'
+  const minutes = Math.floor(delta / 60_000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return new Date(ts).toISOString().slice(0, 10)
+}
+
+/** Open a session by id through the workspace navigation service. */
+function openSessionById(ctx: KeysContext, sessionId: string): void {
+  const ui = tryGet<{ openSession(target: string): void }>(ctx, 'uiWorkspace')
+  if (ui === undefined) {
+    toast('opening sessions unavailable (no uiWorkspace service)')
+    return
+  }
+  try {
+    ui.openSession(sessionId)
+  } catch {
+    toast('could not open the session')
+  }
+}
+
+/**
+ * Navigate to a workspace: its dashboard panel when the layout has registered
+ * one (same programmatic panel-open the usage command uses), else the most
+ * recent session in that workspace.
+ */
+function runWorkspaceHit(ctx: KeysContext, label: string, sessionId: string | undefined): void {
+  const layout = tryGet<{ selectPanel(id: string): void }>(ctx, 'layout')
+  if (layout !== undefined) {
+    try {
+      layout.selectPanel(workspacePanelId(label))
+      return
+    } catch {
+      // no `workspace-<slug>` panel registered — fall through to the session
+    }
+  }
+  if (sessionId !== undefined) {
+    openSessionById(ctx, sessionId)
+    return
+  }
+  toast(`workspace “${label}” has no openable panel or session`)
+}
+
 // --- palette ---------------------------------------------------------------
 
 interface PaletteCommand {
@@ -334,8 +479,16 @@ const PALETTE_CSS = `
   box-shadow: inset 2px 0 0 var(--dsw-alias-brand-primary, #ff9940);
 }
 [data-plugin="keys-palette"] .kp-title { font-size: 14px; font-weight: 600; }
-[data-plugin="keys-palette"] .kp-sub { font-size: 12px; opacity: .65; }
+[data-plugin="keys-palette"] .kp-sub {
+  font-size: 12px; opacity: .65;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 [data-plugin="keys-palette"] .kp-empty { padding: 18px 16px; font-size: 13px; opacity: .6; }
+[data-plugin="keys-palette"] .kp-header {
+  padding: 10px 16px 4px; font-size: 11px; font-weight: 700; letter-spacing: .07em;
+  color: var(--dsw-alias-label-tertiary, #8a9096); user-select: none;
+}
+[data-plugin="keys-palette"] .kp-note { padding: 4px 16px 8px; font-size: 12px; opacity: .55; }
 [data-plugin="keys-palette"] .kp-slash .kp-title::before {
   content: '/'; color: var(--dsw-alias-brand-primary, #ff9940); font-weight: 700; margin-right: 2px;
 }
@@ -359,12 +512,13 @@ function isSubsequence(q: string, hay: string): boolean {
 /**
  * undefined = no match. Otherwise the rank score: distinct keyword hits
  * (2 points each) plus 1 when every token appears in the title verbatim.
+ * Shared by the command palette and the search mode's client-side corpora.
  */
-function matchScore(command: PaletteCommand, tokens: readonly string[]): number | undefined {
+function fuzzyScore(fields: FuzzyFields, tokens: readonly string[]): number | undefined {
   if (tokens.length === 0) return 0
-  const title = command.title.toLowerCase()
-  const subtitle = (command.subtitle ?? '').toLowerCase()
-  const keywords = command.keywords.map(keyword => keyword.toLowerCase())
+  const title = fields.title.toLowerCase()
+  const subtitle = (fields.subtitle ?? '').toLowerCase()
+  const keywords = fields.keywords.map(keyword => keyword.toLowerCase())
   const hay = `${title} ${subtitle} ${keywords.join(' ')}`
   if (!tokens.every(token => isSubsequence(token, hay))) return undefined
   const hits = keywords.filter(keyword =>
@@ -395,7 +549,7 @@ function noteRun(commandId: string): void {
   }
 }
 
-export const inject = ['layout', 'workspaces', 'uiWorkspace', 'remote.session', 'modelDirectories']
+export const inject = ['layout', 'workspaces', 'uiWorkspace', 'remote.session', 'modelDirectories', 'sessions']
 
 export function apply(ctx: KeysContext): void {
   if (typeof document === 'undefined') return
@@ -419,15 +573,113 @@ export function apply(ctx: KeysContext): void {
   const input = root.querySelector('.kp-input') as HTMLInputElement
   const list = root.querySelector('.kp-list') as HTMLDivElement
 
+  // --- data sources --------------------------------------------------------
+  /** Session list + host-backed message search; every consumer degrades. */
+  const sessionsFace = tryGet<SessionsFace>(ctx, 'sessions')
+
   let open = false
+  let mode: PaletteMode = 'commands'
   let filtered: PaletteCommand[] = []
+  let searchHits: readonly SearchHit[] = []
   let selected = 0
   let placeholderIndex = 0
 
+  // Message full-text is async and debounced; its state belongs to the
+  // currently-displayed query only.
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  let searchAbort: AbortController | undefined
+  let messageState: 'idle' | 'loading' | 'ready' | 'error' = 'idle'
+  let messageHits: readonly { sessionId: string; snippet: string }[] = []
+  let messageQuery = ''
+
   function applyPlaceholder(): void {
-    input.placeholder = PLACEHOLDERS[placeholderIndex % PLACEHOLDERS.length] ?? ''
+    input.placeholder = mode === 'search'
+      ? 'Search workspaces, sessions, and messages'
+      : PLACEHOLDERS[placeholderIndex % PLACEHOLDERS.length] ?? ''
   }
   applyPlaceholder()
+
+  /** Cancel any pending/in-flight message search and drop its results. */
+  function resetMessageSearch(): void {
+    if (searchTimer !== undefined) {
+      clearTimeout(searchTimer)
+      searchTimer = undefined
+    }
+    searchAbort?.abort()
+    searchAbort = undefined
+    messageState = 'idle'
+    messageHits = []
+    messageQuery = ''
+  }
+
+  /** Debounce-query the host message index; delivery is stale-guarded.
+   *  The sanctioned `sessions.search` content index is opt-in (disabled in
+   *  this fork's base bundle), so a failed/`ok:false` result falls back to
+   *  the keys host route's bounded transcript scan (same response shape). */
+  function scheduleMessageSearch(query: string): void {
+    if (searchTimer !== undefined) {
+      clearTimeout(searchTimer)
+      searchTimer = undefined
+    }
+    searchAbort?.abort()
+    searchAbort = undefined
+    if (query === '') {
+      messageState = 'idle'
+      messageHits = []
+      messageQuery = ''
+      return
+    }
+    const face = sessionsFace
+    const deliver = (result: SearchRemoteResult): void => {
+      if (result.ok) {
+        messageHits = result.value.items
+        messageState = 'ready'
+      } else {
+        messageHits = []
+        messageState = 'error'
+      }
+    }
+    const hostFallback = async (signal: AbortSignal): Promise<SearchRemoteResult> => {
+      const response = await fetch('/api/keys/messages', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query }),
+        signal,
+      })
+      const parsed: unknown = await response.json()
+      if (typeof parsed === 'object' && parsed !== null && 'ok' in parsed) return parsed as SearchRemoteResult
+      return { ok: false }
+    }
+    messageState = 'loading'
+    messageQuery = query
+    searchTimer = setTimeout(() => {
+      searchTimer = undefined
+      const controller = new AbortController()
+      searchAbort = controller
+      void (async () => {
+        try {
+          if (face !== undefined) {
+            const result = await face.search(query, controller.signal)
+            deliver(result.ok ? result : await hostFallback(controller.signal))
+          } else {
+            deliver(await hostFallback(controller.signal))
+          }
+        } catch (error) {
+          if (controller.signal.aborted) return
+          if (face !== undefined && error instanceof Error && error.name !== 'AbortError') {
+            try {
+              deliver(await hostFallback(controller.signal))
+            } catch {
+              if (!controller.signal.aborted) deliver({ ok: false })
+            }
+          } else {
+            deliver({ ok: false })
+          }
+        }
+        if (open && mode === 'search' && input.value.trim() === messageQuery) render()
+      })()
+    }, CONFIG.searchDebounceMs)
+  }
 
   function passthroughEntry(query: string): PaletteCommand {
     return {
@@ -441,7 +693,196 @@ export function apply(ctx: KeysContext): void {
     }
   }
 
-  function render(): void {
+  /**
+   * Search mode rows for the current query: workspaces and sessions come from
+   * the live session list (fuzzy, recency-ordered); messages from the host
+   * index. Grouped under muted headers; headers and notes are not selectable.
+   */
+  function buildSearchRows(query: string, tokens: readonly string[]): SearchRow[] {
+    const rows: SearchRow[] = []
+    const snapshot = sessionsFace?.list.getSnapshot()
+    const rowOf = (id: string): SessionRow | undefined => snapshot?.byId[id]
+
+    // --- workspaces: unique cwd labels, most recent session kept for navigation
+    interface WorkspaceBucket {
+      label: string
+      path: string
+      updatedAt: number
+      sessionId: string | undefined
+    }
+    const workspaces = new Map<string, WorkspaceBucket>()
+    const sessionCandidates: Array<{ row: SessionRow; title: string; score: number }> = []
+    for (const id of snapshot?.ids ?? []) {
+      const row = rowOf(id)
+      if (row === undefined) continue
+      if (row.blank && !row.running) continue
+      const label = workspaceLabelOf(row.cwd)
+      if (row.cwd !== undefined && label !== undefined) {
+        const bucket = workspaces.get(row.cwd)
+        if (bucket === undefined) {
+          workspaces.set(row.cwd, { label, path: row.cwd, updatedAt: row.updatedAt, sessionId: id })
+        } else {
+          if (row.updatedAt > bucket.updatedAt) bucket.updatedAt = row.updatedAt
+          // keep a non-blank session when the bucket only holds a blank one
+          if (!row.blank && (bucket.sessionId === undefined || rowOf(bucket.sessionId)?.blank === true)) {
+            bucket.sessionId = id
+          }
+        }
+      }
+      const title = row.displayTitle ?? id
+      const score = fuzzyScore({ title, keywords: label === undefined ? [] : [label] }, tokens)
+      if (score !== undefined) sessionCandidates.push({ row, title, score })
+    }
+
+    const workspaceEntries: Array<{ bucket: WorkspaceBucket; score: number }> = []
+    for (const bucket of workspaces.values()) {
+      const score = fuzzyScore(
+        { title: bucket.label, keywords: bucket.path.split('/').filter(part => part !== '') },
+        tokens,
+      )
+      if (score !== undefined) workspaceEntries.push({ bucket, score })
+    }
+    // keyword hits first; ties go to the most recently active (stable sort)
+    workspaceEntries.sort((a, b) =>
+      b.score - a.score || b.bucket.updatedAt - a.bucket.updatedAt)
+    if (workspaceEntries.length > 0) {
+      rows.push({ type: 'header', label: 'workspaces' })
+      for (const { bucket } of workspaceEntries.slice(0, CONFIG.searchWorkspaceCap)) {
+        const sessionId = bucket.sessionId
+        rows.push({
+          type: 'hit',
+          hit: {
+            title: bucket.label,
+            subtitle: bucket.path,
+            run: () => {
+              runWorkspaceHit(ctx, bucket.label, sessionId)
+            },
+          },
+        })
+      }
+    }
+
+    // --- sessions: titles + last activity, fuzzy + recency
+    sessionCandidates.sort((a, b) => b.score - a.score || b.row.updatedAt - a.row.updatedAt)
+    const sessionRows = sessionCandidates.slice(0, CONFIG.searchSessionCap)
+    if (sessionRows.length > 0) {
+      rows.push({ type: 'header', label: 'sessions' })
+      for (const { row, title } of sessionRows) {
+        const label = workspaceLabelOf(row.cwd)
+        rows.push({
+          type: 'hit',
+          hit: {
+            title,
+            subtitle: label === undefined
+              ? relativeTime(row.updatedAt)
+              : `${relativeTime(row.updatedAt)} · ${label}`,
+            run: () => {
+              openSessionById(ctx, row.id)
+            },
+          },
+        })
+      }
+    }
+
+    // --- messages: host full-text over transcripts (query required)
+    if (query !== '') {
+      rows.push({ type: 'header', label: 'messages' })
+      if (messageState === 'ready') {
+        if (messageHits.length === 0) {
+          rows.push({ type: 'note', text: 'no message matches' })
+        } else {
+          for (const item of messageHits) {
+            const row = rowOf(item.sessionId)
+            const title = row?.displayTitle ?? `${item.sessionId.slice(0, 10)}…`
+            const sessionId = item.sessionId
+            rows.push({
+              type: 'hit',
+              hit: {
+                title,
+                subtitle: item.snippet,
+                run: () => {
+                  openSessionById(ctx, sessionId)
+                },
+              },
+            })
+          }
+        }
+      } else if (messageState === 'error') {
+        rows.push({ type: 'note', text: 'message search unavailable' })
+      } else {
+        rows.push({ type: 'note', text: 'searching messages…' })
+      }
+    }
+    return rows
+  }
+
+  /** Rows → DOM; only hits join the keyboard/mouse selection. */
+  function renderRows(rows: SearchRow[]): void {
+    selected = Math.min(selected, Math.max(0, searchHits.length - 1))
+    list.innerHTML = ''
+    if (rows.length === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'kp-empty'
+      empty.textContent = 'No matching workspaces, sessions, or messages.'
+      list.append(empty)
+      return
+    }
+    rows.forEach(row => {
+      if (row.type === 'header') {
+        const header = document.createElement('div')
+        header.className = 'kp-header'
+        header.textContent = row.label
+        list.append(header)
+        return
+      }
+      if (row.type === 'note') {
+        const note = document.createElement('div')
+        note.className = 'kp-note'
+        note.textContent = row.text
+        list.append(note)
+        return
+      }
+      const index = searchHits.indexOf(row.hit)
+      const item = document.createElement('div')
+      item.className = 'kp-item'
+      item.dataset.selected = String(index === selected)
+      const title = document.createElement('div')
+      title.className = 'kp-title'
+      title.textContent = row.hit.title
+      const sub = document.createElement('div')
+      sub.className = 'kp-sub'
+      sub.textContent = row.hit.subtitle
+      item.append(title, sub)
+      item.addEventListener('click', () => {
+        void runHit(row.hit)
+      })
+      item.addEventListener('mousemove', () => {
+        if (selected !== index) {
+          selected = index
+          render()
+        }
+      })
+      list.append(item)
+    })
+    list.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+  }
+
+  function renderSearch(): void {
+    const query = input.value.trim()
+    const tokens = query === '' ? [] : query.toLowerCase().split(/\s+/)
+    const hits: SearchHit[] = []
+    const rows = buildSearchRows(query, tokens).map((row): SearchRow => {
+      if (row.type === 'hit') {
+        hits.push(row.hit)
+        return { type: 'hit', hit: row.hit }
+      }
+      return row
+    })
+    searchHits = hits
+    renderRows(rows)
+  }
+
+  function renderCommands(): void {
     const query = input.value.trim()
     if (query.startsWith('/') && query.length > 1) {
       filtered = [passthroughEntry(query)]
@@ -450,7 +891,7 @@ export function apply(ctx: KeysContext): void {
       const recency = new Map(recentIds().map((id, index) => [id, index]))
       const scored: Array<{ command: PaletteCommand; score: number }> = []
       for (const command of COMMANDS) {
-        const score = matchScore(command, tokens)
+        const score = fuzzyScore(command, tokens)
         if (score !== undefined) scored.push({ command, score })
       }
       // keyword hits first; ties go to recently-run commands, then to the
@@ -463,6 +904,7 @@ export function apply(ctx: KeysContext): void {
       })
       filtered = scored.map(entry => entry.command)
     }
+    searchHits = []
     selected = Math.min(selected, Math.max(0, filtered.length - 1))
     list.innerHTML = ''
     if (filtered.length === 0) {
@@ -487,20 +929,30 @@ export function apply(ctx: KeysContext): void {
         void runSelected(command)
       })
       item.addEventListener('mousemove', () => {
-        selected = i
-        render()
+        if (selected !== i) {
+          selected = i
+          render()
+        }
       })
       list.append(item)
     })
+    list.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' })
   }
 
-  function setOpen(value: boolean): void {
+  function render(): void {
+    if (mode === 'search') renderSearch()
+    else renderCommands()
+  }
+
+  function setOpen(value: boolean, nextMode: PaletteMode = mode): void {
     open = value
+    mode = nextMode
     root.dataset.open = String(value)
+    resetMessageSearch()
     if (value) {
       input.value = ''
       selected = 0
-      placeholderIndex += 1
+      if (nextMode === 'commands') placeholderIndex += 1
       applyPlaceholder()
       render()
       input.focus()
@@ -518,14 +970,25 @@ export function apply(ctx: KeysContext): void {
     await command.run(ctx)
   }
 
+  async function runHit(hit: SearchHit): Promise<void> {
+    setOpen(false)
+    await hit.run(ctx)
+  }
+
+  /** Number of selectable rows under the current mode. */
+  function selectableCount(): number {
+    return mode === 'search' ? searchHits.length : filtered.length
+  }
+
   input.addEventListener('input', () => {
     selected = 0
+    if (mode === 'search') scheduleMessageSearch(input.value.trim())
     render()
   })
   input.addEventListener('keydown', event => {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      selected = Math.min(selected + 1, Math.max(0, filtered.length - 1))
+      selected = Math.min(selected + 1, Math.max(0, selectableCount() - 1))
       render()
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
@@ -533,8 +996,13 @@ export function apply(ctx: KeysContext): void {
       render()
     } else if (event.key === 'Enter') {
       event.preventDefault()
-      const command = filtered[selected]
-      if (command !== undefined) void runSelected(command)
+      if (mode === 'search') {
+        const hit = searchHits[selected]
+        if (hit !== undefined) void runHit(hit)
+      } else {
+        const command = filtered[selected]
+        if (command !== undefined) void runSelected(command)
+      }
     } else if (event.key === 'Escape') {
       event.preventDefault()
       setOpen(false)
@@ -551,19 +1019,41 @@ export function apply(ctx: KeysContext): void {
     applyPlaceholder()
   }, CONFIG.placeholderRotateMs)
 
+  // Search results track the live session list (rows arrive after the host
+  // answers the first list refresh).
+  const unsubscribeSessions = sessionsFace?.list.subscribe(() => {
+    if (open && mode === 'search') render()
+  })
+
   // --- global keybinds -----------------------------------------------------
   // Effect contract: the callback sets up, its returned function is the
   // disposer. (The first version removed the DOM inside the setup body —
   // the palette deleted itself the instant it was created.)
+  const toggleMode = (target: PaletteMode): void => {
+    if (open && mode === target) setOpen(false, target)
+    else setOpen(true, target)
+  }
   const onKey = (event: KeyboardEvent): void => {
-    // Cmd/Ctrl+<paletteKey> — toggle the palette (no browser-reserved conflict;
-    // this intentionally also works while typing in the composer).
-    if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey
-      && event.key.toLowerCase() === CONFIG.paletteKey) {
-      event.preventDefault()
-      event.stopPropagation()
-      setOpen(!open)
-      return
+    if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey) {
+      const key = event.key.toLowerCase()
+      // Cmd/Ctrl+<paletteKey> — toggle the palette (no browser-reserved conflict;
+      // this intentionally also works while typing in the composer).
+      if (key === CONFIG.paletteKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        toggleMode('commands')
+        return
+      }
+      // Cmd/Ctrl+<searchKey> — toggle global search. stopPropagation in the
+      // capture phase keeps dsh's native session-search dispatcher (bubble
+      // phase, Cmd/Ctrl+K on desktop) from ever seeing the chord; its
+      // Cmd/Ctrl+Alt+K web variant carries Alt and still passes through.
+      if (key === CONFIG.searchKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        toggleMode('search')
+        return
+      }
     }
     // Alt+<cyclerKey> — cycle the thinking level for the current session.
     if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey
@@ -577,6 +1067,8 @@ export function apply(ctx: KeysContext): void {
   ctx.effect(() => () => {
     window.removeEventListener('keydown', onKey, true)
     clearInterval(rotateTimer)
+    unsubscribeSessions?.()
+    resetMessageSearch()
     root.remove()
     style.remove()
     clearTimeout(toastTimer)
