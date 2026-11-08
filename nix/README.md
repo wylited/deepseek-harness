@@ -1,9 +1,14 @@
-# dsh on Nix — preparation notes (`nix/` on branch `wyli`)
+# dsh on Nix — packaging notes (`nix/` on branch `wyli`)
 
-**Status: skeleton.** Evaluates to a real `.drv` for `x86_64-linux` (the only
-supported target; re-add platforms via the `nodeSrc` attrset + `meta.platforms`
-if ever needed). Nothing has been built end-to-end yet. This file is the
-loop-closer.
+**Status: module deployed, package still skeleton.** The flake lives at the
+repo ROOT (`../flake.nix`) so fleet flakes can consume
+`github:wylited/deepseek-harness/wyli` directly: it exposes
+`nixosModules.dsh` (the auto-updating web service — see `./module.nix`)
+and `packages.x86_64-linux.dsh` (this directory's derivation). The package
+evaluates to a real `.drv` for `x86_64-linux` (the only supported target;
+re-add platforms via the `nodeSrc` attrset + `meta.platforms` if ever
+needed) but nothing has been built end-to-end yet — `pnpmDeps.hash` is still
+`lib.fakeHash`. This file is the loop-closer for that build.
 
 ## Why this is weird (the constraints that shaped it)
 
@@ -27,8 +32,7 @@ loop-closer.
 ## Fill-in loop (to finish the build)
 
 ```sh
-cd nix
-nix build .#packages.x86_64-linux.dsh 2>&1 | grep -E "got:|specified:"
+nix build .#packages.x86_64-linux.dsh 2>&1 | grep -E "got:|specified:"   # from repo root
 # paste the `got:` hash into pnpmDeps.hash; re-run until the real build starts
 ```
 
