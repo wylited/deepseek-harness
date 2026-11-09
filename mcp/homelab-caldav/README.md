@@ -23,8 +23,8 @@ server (field shape per `packages/mcp/mcp-manager`; stdio rows take
 | Key | Meaning |
 | --- | --- |
 | `RADICALE_URL` | radicale root, e.g. `https://dav.ts.wyli.tech` (caddy vhost on warden, tailnet-only, reverse_proxy → 127.0.0.1:5232) |
-| `RADICALE_USER` | radicale htpasswd user (fleet user: `wyli`) |
-| `RADICALE_PASS` | that user's password |
+| `RADICALE_USER` | radicale principal name (fleet user: `wyli`) |
+| `RADICALE_PASS` | any value — radicale has been passwordless since 2026-11-09 (`auth.type = none`, tailnet is the boundary); the principal NAME is the credential |
 | `RADICALE_BASIC_USER` / `RADICALE_BASIC_PASS` | optional: only if a front proxy adds its own Basic layer (today caddy adds none — radicale's own htpasswd auth is the only gate) |
 
 For `/etc/nix/dsh-env` (0600, root-owned) append:

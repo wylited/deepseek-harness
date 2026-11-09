@@ -21,6 +21,10 @@ Two instances of this fork run:
 - Git: `origin` = upstream deepseek-ai/deepseek-harness — NEVER push there.
   `fork` = github:wylited/deepseek-harness; branch `wyli` is the fork line.
   Plain `git push` goes to `fork/wyli` (pushRemote is preconfigured).
+  For changes you are NOT sure about (big refactors, anything touching the
+  deployment itself), push `git push origin HEAD:refs/heads/staging`
+  instead and tell the user — `wyli` is what warden deploys, and merging
+  staging → wyli is the human approval gate.
 
 Prod layout on warden, all under `/var/lib/dsh`:
 - `src/` — clone of the fork, branch `wyli` (its default branch). Deploy key
