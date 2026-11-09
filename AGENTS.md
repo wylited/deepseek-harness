@@ -11,7 +11,7 @@ Two instances of this fork run:
 | Instance | Host | Serving | State |
 | --- | --- | --- | --- |
 | dev (this checkout) | user's Mac | `./dsh web` → http://localhost:3080 | `.dsh-home/` in repo dir |
-| prod | warden (NixOS, tailnet-only) | https://ai.ts.wyli.tech | `/var/lib/dsh` |
+| prod | warden (NixOS, tailnet-only) | https://ds.ts.wyli.tech | `/var/lib/dsh` |
 
 - Prod: caddy → loopback ports; blue-green slots `dsh@a`/`dsh@b` on 3080/3081
   with health-checked failover; `/var/lib/dsh/.active-slot` names the slot
@@ -84,8 +84,8 @@ tailnet). The envelope wraps the args under a literal `args` key, and the
 inner object is keyed by the handler parameter name (`request`):
 
 ```sh
-rpc() { curl -sS -H 'Host: ai.ts.wyli.tech' -H 'content-type: application/json' \
-  -X POST "https://ai.ts.wyli.tech/api/$1" -d "$(printf '{"type":"client-request",\
+rpc() { curl -sS -H 'Host: ds.ts.wyli.tech' -H 'content-type: application/json' \
+  -X POST "https://ds.ts.wyli.tech/api/$1" -d "$(printf '{"type":"client-request",\
 "rpcId":"%s","method":"%s","payload":{"args":{"request":%s}}}' "$(uuidgen | tr A-Z a-z)" "$1" "$2")"; }
 
 mkdir -p <dir> first — workspace/create REQUIRES an existing directory
@@ -162,7 +162,7 @@ full-viewport `100dvh` sheets on mobile, hover styles only under
 targets ≥44px. Never assume a keyboard or a pointer.
 
 
-- `curl -sI https://ai.ts.wyli.tech/` returns HTTP 200; the UI's revision
+- `curl -sI https://ds.ts.wyli.tech/` returns HTTP 200; the UI's revision
   badge shows your pushed git hash.
 - `journalctl -u dsh-update -n 50` shows the fast-forward to your revision.
 - `systemctl is-active dsh@a dsh@b` both healthy;

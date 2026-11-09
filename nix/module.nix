@@ -368,7 +368,7 @@ let
       config:
         authMode: trust-network
         trustedHosts:
-          - ai.ts.wyli.tech
+${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
           # Port-less entry matches any port; both blue-green slots (and the
           # localhost:port web UI) pass. Bare 127.0.0.1 needs no entry: the
           # fence always admits the listener's loopback bind literal.
@@ -971,12 +971,12 @@ let
 in
 {
   options.services.dsh = {
-    enable = lib.mkEnableOption "dsh — the web AI harness, auto-updating from github:wylited/deepseek-harness and served tokenless to the tailnet via ai.ts.wyli.tech";
+    enable = lib.mkEnableOption "dsh — the web AI harness, auto-updating from github:wylited/deepseek-harness and served tokenless to the tailnet via ds.ts.wyli.tech";
 
     port = lib.mkOption {
       type = lib.types.port;
       default = 3080;
-      description = "Loopback port of blue-green slot a; slot b takes port+1. Caddy's ai.ts.wyli.tech vhost health-checks both.";
+      description = "Loopback port of blue-green slot a; slot b takes port+1. Caddy's ds.ts.wyli.tech vhost health-checks both.";
     };
 
     trustedHosts = lib.mkOption {

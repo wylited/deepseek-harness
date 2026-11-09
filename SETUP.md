@@ -92,12 +92,12 @@ publishes are just `git push`.
 non-empty value of that variable hard-disables the `session-telemetry-otel`
 bundle row regardless of `DSH_TELEMETRY_MODE`.
 
-## Homelab deployment — ai.ts.wyli.tech (warden)
+## Homelab deployment — ds.ts.wyli.tech (warden)
 
 The fork self-deploys to warden-arch as a NixOS service (`nix/module.nix`,
 fleet input `github:wylited/deepseek-harness/wyli`):
 
-- **Serving**: caddy fronts `https://ai.ts.wyli.tech` → `127.0.0.1:3080` on
+- **Serving**: caddy fronts `https://ds.ts.wyli.tech` → `127.0.0.1:3080` on
   warden (wildcard `ts.wyli.tech` LE cert, `wyli.ingress.routes`). Tailnet
   members only — **no token**: the connection plugin runs
   `authMode: trust-network`, so any request passing the host fence
