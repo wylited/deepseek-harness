@@ -978,6 +978,12 @@ in
       description = "Loopback port of blue-green slot a; slot b takes port+1. Caddy's ai.ts.wyli.tech vhost health-checks both.";
     };
 
+    trustedHosts = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "Extra --trusted-host authorities passed to the web invocation (e.g. the tailnet vhost name). Feeds webStartup.trustedHosts: the connection layer's trusted set AND the dashboard host fence.";
+    };
+
     stateDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/dsh";
@@ -1011,10 +1017,12 @@ in
         wantedBy = lib.optionals (slot == "a") [ "multi-user.target" ];
         serviceConfig = dshServiceConfig // {
           # Same boot the repo's ./dsh wrapper performs (pnpm dsh = node
-          # --import tsx/esm apps/cli/src/bin.ts); the trust fence comes from
-          # the profile.
+          # --import tsx/esm apps/cli/src/bin.ts); the connection layer's trust
+          # fence comes from the profile, the dashboard host fence from these
+          # --trusted-host flags (webStartup.trustedHosts).
           ExecStart =
-            "${nodeDir}/bin/node --import tsx/esm apps/cli/src/bin.ts web --no-open --host ${bind} --port ${toString port}";
+            "${nodeDir}/bin/node --import tsx/esm apps/cli/src/bin.ts web --no-open --host ${bind} --port ${toString port}"
+            + lib.concatMapStrings (h: " --trusted-host ${h}") cfg.trustedHosts;
         };
       })
       slotPorts) // {
