@@ -379,6 +379,18 @@ let
             COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME=${corepackHome} \
             ${nodeDir}/bin/corepack pnpm run build
       )
+      # The profile's link: plugins ship lib/ as a gitignored build output —
+      # a fresh clone has none, and the web profile fails their import
+      # (ERR_MODULE_NOT_FOUND) at boot without it.
+      for p in dashboard keys restyle; do
+        DSH_TELEMETRY_DISABLED=1 ${nodeDir}/bin/node "$src/plugins/$p/build.mjs"
+      done
+      perplexity=$src/plugins/perplexity-web
+      ${pkgs.coreutils}/bin/mkdir -p "$perplexity/node_modules/@deepseek-ai"
+      ${pkgs.coreutils}/bin/ln -sfn ../../../../vendor/cordis "$perplexity/node_modules/@deepseek-ai/cordis"
+      ${pkgs.coreutils}/bin/ln -sfn ../../../../vendor/schemastery "$perplexity/node_modules/@deepseek-ai/schemastery"
+      ${pkgs.coreutils}/bin/ln -sfn ../../../../packages/web/web "$perplexity/node_modules/@deepseek-ai/dsh-web"
+      (cd "$perplexity" && "$src/node_modules/.bin/tsc" -p tsconfig.json)
       echo "$head_rev" > ${builtMarker}.tmp
       ${pkgs.coreutils}/bin/mv ${builtMarker}.tmp ${builtMarker}
     fi
@@ -551,7 +563,13 @@ in
         RestrictSUIDSGID = true;
         LockPersonality = true;
         SystemCallArchitectures = "native";
-        CapabilityBoundingSet = "";
+        # CapabilityBoundingSet stays: the root wrapper setpriv-drops to the
+        # dsh uid, which needs CAP_SETUID/CAP_SETGID (an empty bounding set
+        # fails setpriv with EPERM — observed on warden).
+        CapabilityBoundingSet = [
+          "CAP_SETUID"
+          "CAP_SETGID"
+        ];
       };
     };
 
