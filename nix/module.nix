@@ -931,8 +931,9 @@ let
       "LD_LIBRARY_PATH=${gccLib}"
       "PATH=${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin"
       # In-session harness git (fetch/push on the fork) needs the deploy key
-      # non-interactively.
-      "GIT_SSH_COMMAND=${sshCommand}"
+      # non-interactively. The value contains spaces: escapeShellArg keeps
+      # systemd from splitting it into bogus assignments (observed on warden).
+      "GIT_SSH_COMMAND=${lib.escapeShellArg sshCommand}"
     ];
     # '-' prefix: the slot's own tree does not exist on first boot —
     # ExecStartPre's provision step creates it; systemd then chdirs for
