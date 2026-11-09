@@ -61,6 +61,53 @@ fleet config repo github:wylited/nix-config (push via key `id_nixconfig`,
 host alias `nixconfig.github.com`) and `nixos-rebuild switch` on warden.
 This is the heavier, riskier path — flag it before using it.
 
+## Workspaces & self-install
+
+The harness works on itself through a dedicated **`harness-work`** workspace:
+
+- Checkout: `/var/lib/dsh/harness-work` — its own clone on the **`staging`
+  branch** (push via deploy key). It is NOT a slot tree: `dsh-update` never
+  fast-forwards or rebuilds it, so WIP edits never collide with a flip. It
+  runs against the live warden instance for testing.
+- Landing work: commit on `staging`, then the user merges `staging → wyli`
+  (GitHub) — that merge is the approval gate; the daily `dsh-update` picks
+  it up. For quick verification the harness can also run the app from its
+  own tree on a spare port.
+- Symlink `/var/lib/dsh/home/harness` → `harness-work`. Durable workspace
+  id `c877eeb9-aac4-4567-8c0d-34a8ea1e9498` (title `harness-work`), with
+  the idle session `harness home`
+  (`session-fa26c11d-0131-4005-8171-f4db22cd8f71`).
+
+More workspaces / sessions are created over the same API the web UI uses
+(unary RPC POSTed to `/api/<controller>/<method>`; tokenless inside the
+tailnet). The envelope wraps the args under a literal `args` key, and the
+inner object is keyed by the handler parameter name (`request`):
+
+```sh
+rpc() { curl -sS -H 'Host: ai.ts.wyli.tech' -H 'content-type: application/json' \
+  -X POST "https://ai.ts.wyli.tech/api/$1" -d "$(printf '{"type":"client-request",\
+"rpcId":"%s","method":"%s","payload":{"args":{"request":%s}}}' "$(uuidgen | tr A-Z a-z)" "$1" "$2")"; }
+
+rpc workspace/create '{"path":"/var/lib/dsh/harness-work"}'  # idempotent per realpath
+rpc session/create   '{"workspaceId":"<id from above>"}'     # binds cwd via the workspace
+rpc session/list     '{}'                                    # read-back
+```
+
+POST to `/api/...` paths only — the same body posted to `/` 405s. Idle
+sessions read back `running:false, blank:true`. Method names per controller
+live in `packages/api/*/src/index.ts` (`@Remote('name')`).
+
+Self-software: the dsh user is in `nix.settings.trusted-users` (fleet repo,
+`hosts/warden/default.nix`), so the harness can install its own packages:
+
+```sh
+sudo -u dsh env HOME=/var/lib/dsh nix profile install nixpkgs#jq
+```
+
+Profile lands in `/nix/var/nix/profiles/per-user/dsh` (bin on
+`/var/lib/dsh/.nix-profile/bin`). Fleet-level software still goes through
+the heavy path above; profile installs are for ad-hoc tooling only.
+
 ## Commit hygiene
 
 COMMIT (source and docs only):
