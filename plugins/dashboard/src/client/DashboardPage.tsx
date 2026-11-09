@@ -593,32 +593,34 @@ function ModelTable({ view }: { view: DashboardOverviewView }) {
       {models.length === 0
         ? <div className="wd-empty">No model activity in the trailing 30 days.</div>
         : (
-          <table className="wd-table">
-            <thead>
-              <tr>
-                <th>Route / model</th>
-                <th data-num>Tokens</th>
-                <th data-num>Calls</th>
-                <th data-num>Share</th>
-              </tr>
-            </thead>
-            <tbody>
-              {models.map(row => (
-                <tr key={`${row.provider}/${row.model}`}>
-                  <td>
-                    <span className="wd-model">{row.model}</span>
-                    {' '}
-                    <span className="wd-dim">via {row.provider}</span>
-                  </td>
-                  <td data-num>{compactTokens(row.tokens)}</td>
-                  <td data-num>{row.calls}</td>
-                  <td data-num>
-                    <span className="wd-share" style={{ width: `${Math.max(4, Math.round((row.tokens / maxModelTokens) * 90))}px` }} />
-                  </td>
+          <div className="wd-tablewrap">
+            <table className="wd-table">
+              <thead>
+                <tr>
+                  <th>Route / model</th>
+                  <th data-num>Tokens</th>
+                  <th data-num>Calls</th>
+                  <th data-num>Share</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {models.map(row => (
+                  <tr key={`${row.provider}/${row.model}`}>
+                    <td>
+                      <span className="wd-model">{row.model}</span>
+                      {' '}
+                      <span className="wd-dim">via {row.provider}</span>
+                    </td>
+                    <td data-num>{compactTokens(row.tokens)}</td>
+                    <td data-num>{row.calls}</td>
+                    <td data-num>
+                      <span className="wd-share" style={{ width: `${Math.max(4, Math.round((row.tokens / maxModelTokens) * 90))}px` }} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
     </section>
   )
@@ -635,28 +637,30 @@ function RecentSessions({ view }: { view: DashboardOverviewView }) {
       {view.sessionsRecent.length === 0
         ? <div className="wd-empty">No recorded usage yet — the ledger folds each assistant reply's token report.</div>
         : (
-          <table className="wd-table">
-            <thead>
-              <tr>
-                <th>Session</th>
-                <th>Model</th>
-                <th data-num>Tokens</th>
-                <th data-num>Calls</th>
-                <th data-num>Last activity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.sessionsRecent.map(row => (
-                <tr key={row.sessionId}>
-                  <td title={row.sessionId}><span className="wd-dim">{row.sessionId.slice(0, 10)}…</span></td>
-                  <td><span className="wd-model">{row.model}</span> <span className="wd-dim">via {row.provider}</span></td>
-                  <td data-num>{compactTokens(row.tokens)}</td>
-                  <td data-num>{row.calls}</td>
-                  <td data-num>{relativeTime(row.lastAt, view.generatedAt)}</td>
+          <div className="wd-tablewrap">
+            <table className="wd-table">
+              <thead>
+                <tr>
+                  <th>Session</th>
+                  <th>Model</th>
+                  <th data-num>Tokens</th>
+                  <th data-num>Calls</th>
+                  <th data-num>Last activity</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {view.sessionsRecent.map(row => (
+                  <tr key={row.sessionId}>
+                    <td title={row.sessionId}><span className="wd-dim">{row.sessionId.slice(0, 10)}…</span></td>
+                    <td><span className="wd-model">{row.model}</span> <span className="wd-dim">via {row.provider}</span></td>
+                    <td data-num>{compactTokens(row.tokens)}</td>
+                    <td data-num>{row.calls}</td>
+                    <td data-num>{relativeTime(row.lastAt, view.generatedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
     </section>
   )

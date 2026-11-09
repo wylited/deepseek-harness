@@ -492,6 +492,32 @@ const PALETTE_CSS = `
 [data-plugin="keys-palette"] .kp-slash .kp-title::before {
   content: '/'; color: var(--dsw-alias-brand-primary, #ff9940); font-weight: 700; margin-right: 2px;
 }
+/* Narrow viewports follow upstream's dialog idiom (SettingsRoot below 768px):
+ * the floating panel becomes a full-viewport sheet — 100% width, dvh height,
+ * the list filling the rest, and safe-area bottom padding for notched phones.
+ * Row and input padding rise to touch-target height. Desktop is untouched.
+ * (Kept last so these rules win the cascade over the base rules above.) */
+@media (max-width: 767px) {
+  [data-plugin="keys-palette"] { padding-top: 0; }
+  [data-plugin="keys-palette"] .kp-panel {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    border-left: 0;
+    border-right: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  [data-plugin="keys-palette"] .kp-list {
+    max-height: none;
+    flex: 1 1 auto;
+    overscroll-behavior: contain;
+  }
+  [data-plugin="keys-palette"] .kp-input { padding: 15px 16px; }
+  [data-plugin="keys-palette"] .kp-item { padding: 13px 16px; }
+}
 `
 
 // --- filtering: subsequence match, ranked by keyword hits + recency --------

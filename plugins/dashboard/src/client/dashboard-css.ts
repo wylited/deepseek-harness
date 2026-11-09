@@ -10,7 +10,14 @@ export const DASHBOARD_CSS = `
   box-sizing: border-box;
   height: 100%;
   overflow-y: auto;
-  max-width: 960px;
+  /* Panel-slot flex item: without this the min-content floor (the heatmap's
+   * max-content grid) keeps the page wider than a narrow shell column and
+   * the shell clips it. The percentage in the cap mirrors upstream's dialog
+   * idiom (SettingsRoot: .panel has width 800px and max-width
+   * calc(100vw - 48px)): wide columns still cap at 960px and the page stays
+   * content-sized there, while narrow columns clamp it to the shell's width. */
+  min-width: 0;
+  max-width: min(960px, 100%);
   margin: 0 auto;
   padding: 28px 30px 64px;
   background: var(--dsw-alias-bg-base, #fafafa);
@@ -41,7 +48,10 @@ export const DASHBOARD_CSS = `
   cursor: copy;
   white-space: nowrap;
 }
-.wd-version:hover, .wd-version[data-copied] { color: var(--dsw-alias-brand-primary, #ff9940); }
+@media (hover: hover) {
+  .wd-version:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+}
+.wd-version[data-copied] { color: var(--dsw-alias-brand-primary, #ff9940); }
 .wd-navbtn {
   padding: 6px 12px;
   border: 1px solid var(--dsw-alias-border-l2, #e5e7e8);
@@ -51,7 +61,9 @@ export const DASHBOARD_CSS = `
   color: var(--dsw-alias-label-primary, #1f2328);
   cursor: pointer;
 }
-.wd-navbtn:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+@media (hover: hover) {
+  .wd-navbtn:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+}
 
 .wd-section {
   border: 1px solid var(--dsw-alias-border-l2, #e5e7e8);
@@ -111,7 +123,9 @@ export const DASHBOARD_CSS = `
   color: var(--dsw-alias-label-tertiary, #8a9199);
   cursor: pointer;
 }
-.wd-group-caret:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+@media (hover: hover) {
+  .wd-group-caret:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+}
 .wd-group-name {
   border: 0;
   background: none;
@@ -126,7 +140,9 @@ export const DASHBOARD_CSS = `
   text-overflow: ellipsis;
 }
 span.wd-group-name { cursor: default; }
-button.wd-group-name:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+@media (hover: hover) {
+  button.wd-group-name:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+}
 .wd-group-count {
   flex: none;
   font-size: 11px;
@@ -143,7 +159,9 @@ button.wd-group-name:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
   color: var(--dsw-alias-label-tertiary, #8a9199);
   cursor: pointer;
 }
-.wd-group-more:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+@media (hover: hover) {
+  .wd-group-more:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
+}
 .wd-group-kids {
   margin: 2px 0 6px 9px;
   padding-left: 12px;
@@ -173,7 +191,9 @@ button.wd-group-name:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
   cursor: pointer;
 }
 button.wd-row { font: inherit; color: inherit; }
-button.wd-row:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+@media (hover: hover) {
+  button.wd-row:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+}
 .wd-row-status {
   padding: 2px 10px 9px 38px;
   font-family: var(--ds-font-family-code, ui-monospace, monospace);
@@ -216,7 +236,9 @@ button.wd-row:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
   font-size: 12px;
   cursor: pointer;
 }
-.wd-answer-send:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+@media (hover: hover) {
+  .wd-answer-send:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+}
 .wd-answer-send:disabled { opacity: 0.45; cursor: default; }
 .wd-dot {
   flex: none;
@@ -278,6 +300,10 @@ button.wd-row:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
 .wd-card-sub { margin-top: 2px; font-size: 10.5px; color: var(--dsw-alias-label-tertiary, #8a9199); }
 
 /* Tables. */
+/* Tables scroll inside their own bounded strip when a narrow column cannot
+ * fit their columns (overflow only paints a scrollbar when needed, so wide
+ * viewports render exactly as before). */
+.wd-tablewrap { overflow-x: auto; overscroll-behavior-x: contain; }
 .wd-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .wd-table th {
   padding: 0 8px 7px;
@@ -348,5 +374,59 @@ button.wd-row:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
 .wd-page button:focus-visible {
   outline: 1px solid var(--dsw-alias-brand-primary, #ff9940);
   outline-offset: 2px;
+}
+
+/* --- Narrow viewports ----------------------------------------------------- */
+/* Upstream's mobile idiom (SettingsRoot/TaskManagerPage): one viewport media
+ * query at 767px — the page gutter drops to 20px inline, the header wraps
+ * its path onto its own line, dense strips scroll inside bounded containers,
+ * and touch targets reach 44px. Desktop rendering is untouched: every rule
+ * here is media-gated, and hover styling above stays desktop-only via the
+ * (hover: hover) guards. */
+@media (max-width: 767px) {
+  .wd-page { padding: 20px 20px 64px; }
+
+  /* The header wraps: title, version chip and nav button share the first
+   * line; the workspace path drops to its own ellipsised line. */
+  .wd-header { flex-wrap: wrap; row-gap: 6px; }
+  .wd-header-path { order: 9; flex-basis: 100%; }
+  .wd-navbtn { min-height: 44px; padding: 8px 16px; }
+  .wd-version { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* 44px touch targets: real growth for the row and form controls, expanded
+   * padding + negative margins for the caret (keeps the head's geometry). */
+  .wd-group-head { align-items: center; }
+  .wd-group-caret {
+    font-size: 14px;
+    line-height: 1;
+    padding: 15px 8px;
+    margin: -8px 0 -8px -8px;
+  }
+  /* The version chip keeps its visual size; an invisible overlay widens the
+   * copy hit area to 44px. */
+  .wd-version { position: relative; }
+  .wd-version::after { content: ''; position: absolute; inset: -12px -8px; }
+  .wd-group-more { padding: 14px 10px; }
+  .wd-row { padding: 14px 10px; }
+  .wd-answer-input { padding: 13px 12px; font-size: 13px; }
+  .wd-answer-send { padding: 13px 16px; font-size: 13px; }
+
+  /* Dense strips scroll in place with a faint right-edge scrim as the
+   * affordance (upstream signals strips by letting the next cell peek;
+   * the heatmap's uniform grid instead gets a soft fade). */
+  .wd-heat-scroll,
+  .wd-tablewrap {
+    box-shadow: inset -14px 0 10px -12px color-mix(in srgb, var(--dsw-alias-label-tertiary, #8a9199) 40%, transparent);
+  }
+  .wd-tablewrap .wd-table { min-width: 440px; }
+  .wd-table { font-size: 13px; }
+}
+
+/* Phone-width columns crowd the feed row's meta: the upstream narrow-move
+ * (AgentPresetLabel hides its label at ≤540px) — drop the model badge and
+ * let title, status tail and when carry the row. */
+@media (max-width: 430px) {
+  .wd-row .wd-badge { display: none; }
+  .wd-version { display: none; }
 }
 `
