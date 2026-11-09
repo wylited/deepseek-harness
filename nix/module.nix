@@ -589,7 +589,7 @@ let
       ${pkgs.coreutils}/bin/env HOME=${home} COREPACK_HOME=${corepackHome} COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
       LD_LIBRARY_PATH=${gccLib} \
       GIT_SSH_COMMAND=${lib.escapeShellArg sshCommand} \
-      PATH=${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin \
+      PATH=${home}/.nix-profile/bin:${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin \
       ${updateInner}
     rc=$?
     set -e
@@ -929,7 +929,7 @@ let
       "COREPACK_HOME=${corepackHome}"
       "COREPACK_ENABLE_DOWNLOAD_PROMPT=0"
       "LD_LIBRARY_PATH=${gccLib}"
-      "PATH=${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin"
+      "PATH=${home}/.nix-profile/bin:${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin"
       # In-session harness git (fetch/push on the fork) needs the deploy key
       # non-interactively. The value contains spaces: escapeShellArg keeps
       # systemd from splitting it into bogus assignments (observed on warden).
