@@ -16,6 +16,17 @@
 #      <stateDir>/home/profiles/web/ from store copies; hand-edits there are
 #      overwritten on the next restart.
 #
+# Serving is blue-green: two concrete instances dsh@a / dsh@b (loopback 3080 /
+# 3081, see slotPorts) share one clone + node + profile tree; exactly one is
+# active at a time and the choice is recorded in <stateDir>/.active-slot
+# (default a, the only boot-enabled slot). The update wrapper flips slots:
+# start the idle one, wait for HTTP 200 on its port (the idle slot's
+# ExecStartPre provision is a no-op — the built-marker gate is global across
+# both instances), stop the active one, record the new slot. A failed health
+# wait rolls back by leaving the old slot serving and exiting non-zero.
+# Caddy fronts BOTH ports with active health checks (fleet ingress module),
+# so the flip never drops the vhost.
+#
 # Keys: providers resolve apiKeyEnv (ZAI_API_KEY) from the process
 # environment, so /etc/nix/dsh-env (EnvironmentFile, optional) supplies them:
 #
@@ -51,9 +62,21 @@ let
   home = "${cfg.stateDir}/home";
   lockFile = "${cfg.stateDir}/.lock";
   builtMarker = "${cfg.stateDir}/.built-rev";
+  activeSlotFile = "${cfg.stateDir}/.active-slot";
   corepackHome = "${cfg.stateDir}/corepack";
-  portStr = toString cfg.port;
   bind = "127.0.0.1";
+
+  # Blue-green slot map: instance name → loopback port. Slot a is the boot
+  # slot (multi-user.target); the update wrapper flips a↔b around rebuilds.
+  slotPorts = {
+    a = cfg.port;
+    b = cfg.port + 1;
+  };
+
+  # Non-interactive git over the RW deploy key: used by updateInner's fetch,
+  # provision-time operations, and any in-session harness git (push/fetch)
+  # spawned by the service. known_hosts is pre-seeded at provision time.
+  sshCommand = "ssh -i ${cfg.stateDir}/.ssh/id_ed25519 -o IdentitiesOnly=yes -o UserKnownHostsFile=${cfg.stateDir}/.ssh/known_hosts -o StrictHostKeyChecking=accept-new";
 
   # Toolchain for the runtime builds: pnpm install compiles node-pty
   # (node-gyp needs python3 + make + a C++ compiler); git fetches the clone;
@@ -296,6 +319,15 @@ let
             args: [ '-y', 'duckduckgo-mcp' ]
             toolName: search
             maxResults: 8
+          # Homelab CalDAV (radicale, dav.ts.wyli.tech): search/add/update
+          # events + todos. Zero-dep stdio MCP server shipped in the fork;
+          # credentials from the service env (/etc/nix/dsh-env:
+          # RADICALE_URL / RADICALE_USER / RADICALE_PASS).
+          - id: homelab-caldav
+            kind: custom
+            transport: stdio
+            command: node
+            args: [ '${src}/mcp/homelab-caldav/src/index.ts' ]
 
     # Tokenless admission on the trusted tailnet: any request passing the
     # Host/Origin fence (loopback, the listener's bind IP, or this list) is
@@ -307,8 +339,10 @@ let
         authMode: trust-network
         trustedHosts:
           - ai.ts.wyli.tech
-          - localhost:${portStr}
-          - 127.0.0.1:${portStr}
+          # Port-less entry matches any port; both blue-green slots (and the
+          # localhost:port web UI) pass. Bare 127.0.0.1 needs no entry: the
+          # fence always admits the listener's loopback bind literal.
+          - localhost
   '';
 
   profileStore = pkgs.runCommand "dsh-profile-web" { } ''
@@ -321,7 +355,9 @@ let
 
   # Idempotent provisioning, run as the dsh user under the state lock:
   # clone, vendored node, profile reconciliation, deps, branded client build.
-  # Callers (dsh.service ExecStartPre / the update unit) hold the flock.
+  # Callers (both dsh@a/dsh@b ExecStartPre / the update unit) hold the flock;
+  # the built-marker gate is global, so whichever slot starts after an update
+  # no-ops here.
   provisionScript = pkgs.writeShellScript "dsh-provision" ''
     set -euo pipefail
     stateDir=${cfg.stateDir}
@@ -334,6 +370,17 @@ let
     # --- source clone -------------------------------------------------------
     if [ ! -d "$src/.git" ]; then
       ${pkgs.git}/bin/git clone --branch ${branch} --single-branch ${repoUrl} "$src"
+    fi
+
+    # --- ssh host trust for github.com --------------------------------------
+    # The clone's origin is SSH (RW deploy key) and the in-session harness
+    # pushes through GIT_SSH_COMMAND; pre-seed the host key so the first
+    # unattended fetch never stalls on a host-key prompt.
+    sshDir=${cfg.stateDir}/.ssh
+    mkdir -p "$sshDir"
+    touch "$sshDir/known_hosts"
+    if ! ${pkgs.gnugrep}/bin/qs '^github.com ' "$sshDir/known_hosts" 2>/dev/null; then
+      ${pkgs.openssh}/bin/ssh-keyscan -t ed25519,rsa github.com >> "$sshDir/known_hosts" 2>/dev/null || true
     fi
 
     # --- vendored node ------------------------------------------------------
@@ -356,6 +403,13 @@ let
         dirty=1
       fi
     done
+
+    # --- harness workspace alias ---------------------------------------------
+    # Profiles cannot declare named workspaces (workspaces are runtime UI
+    # records created via workspace.create — recon 2026-11-09). Convention:
+    # ${home}/harness is a stable alias for the fork checkout the harness
+    # redeploys from — no git worktree, no second clone.
+    ln -sfn ${src} ${home}/harness
 
     # Profile deps: one registry package + link: plugins into the clone.
     if [ "$dirty" -eq 1 ] || [ ! -d "$profileDir/node_modules" ]; then
@@ -398,15 +452,16 @@ let
   '';
 
   # Fast-forward check + provision, run AS the dsh user (inside setpriv) under
-  # the state lock. Exit 42 = HEAD moved and provisioning succeeded; the root
-  # wrapper then restarts dsh.service. Never resets or force-updates.
+  # the state lock. Exit 42 = the active build is stale (HEAD moved and/or the
+  # built-marker no longer names HEAD) and provisioning succeeded; the root
+  # wrapper then flips the blue-green slots. Never resets or force-updates.
   updateInner = pkgs.writeShellScript "dsh-update-inner" ''
     set -euo pipefail
     exec 9>>${lockFile}
     ${pkgs.util-linux}/bin/flock -x 9
 
     if [ ! -d ${src}/.git ]; then
-      echo "dsh-update: no clone yet; dsh.service owns first provisioning"
+      echo "dsh-update: no clone yet; dsh@a owns first provisioning"
       exit 0
     fi
 
@@ -417,31 +472,72 @@ let
       exit 1
     fi
     new=$(${pkgs.git}/bin/git -C ${src} rev-parse HEAD)
-    if [ "$old" = "$new" ]; then
+    built=$(${pkgs.coreutils}/bin/cat ${builtMarker} 2>/dev/null || true)
+    if [ "$old" = "$new" ] && [ "$new" = "$built" ]; then
       echo "dsh-update: already at $new"
       exit 0
     fi
-
-    echo "dsh-update: fast-forwarded $old -> $new; rebuilding"
+    if [ "$old" != "$new" ]; then
+      echo "dsh-update: fast-forwarded $old -> $new; rebuilding"
+    else
+      echo "dsh-update: built-marker stale (head $new, built ''${built:-none}); rebuilding"
+    fi
     ${provisionScript}
     exit 42
   '';
 
-  # Root wrapper: drop to the dsh uid for everything touching stateDir, then
-  # restart the service only when the clone actually moved.
+  # Root wrapper: drop to the dsh uid for everything touching stateDir; on a
+  # successful rebuild (exit 42) flip the blue-green slots with zero vhost
+  # downtime. The active slot is never stopped before its replacement answers
+  # 200; a failed health wait rolls back (old slot keeps serving) non-zero.
   updateScript = pkgs.writeShellScript "dsh-update" ''
     set -euo pipefail
     set +e
     ${pkgs.util-linux}/bin/setpriv --reuid=dsh --regid=dsh --init-groups \
       ${pkgs.coreutils}/bin/env HOME=${home} COREPACK_HOME=${corepackHome} COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
       LD_LIBRARY_PATH=${gccLib} \
+      GIT_SSH_COMMAND=${lib.escapeShellArg sshCommand} \
       PATH=${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin \
       ${updateInner}
     rc=$?
     set -e
     if [ "$rc" -eq 42 ]; then
-      echo "dsh-update: updated; restarting dsh.service"
-      systemctl restart dsh
+      # Read the slot AS the dsh user: the unit's bounding set strips
+      # CAP_DAC_OVERRIDE and /var/lib/dsh is 0700 dsh-owned — root cannot
+      # even traverse it (observed 2026-11-09: empty read misdetected the
+      # active slot and no-op'd the flip).
+      active=$(${pkgs.util-linux}/bin/setpriv --reuid=dsh --regid=dsh --init-groups \
+        ${pkgs.coreutils}/bin/cat ${activeSlotFile} 2>/dev/null || true)
+      if [ "$active" != "b" ]; then active=a; fi
+      if [ "$active" = "a" ]; then idle=b; else idle=a; fi
+      idlePort=${toString slotPorts.b}
+      if [ "$idle" = "a" ]; then idlePort=${toString slotPorts.a}; fi
+
+      echo "dsh-update: bringing up dsh@$idle on 127.0.0.1:$idlePort"
+      systemctl start "dsh@$idle"
+
+      ok=
+      waited=0
+      while [ "$waited" -lt 180 ]; do
+        code=$(${pkgs.curl}/bin/curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$idlePort/" || true)
+        if [ "$code" = "200" ]; then ok=1; break; fi
+        sleep 2
+        waited=$((waited + 2))
+      done
+      if [ -z "$ok" ]; then
+        echo "dsh-update: dsh@$idle never served 200 on 127.0.0.1:$idlePort within 180s; keeping dsh@$active" >&2
+        systemctl stop "dsh@$idle"
+        exit 1
+      fi
+
+      echo "dsh-update: dsh@$idle healthy; retiring dsh@$active"
+      systemctl stop "dsh@$active"
+      # Record the slot AS the dsh user: the unit's bounding set strips
+      # CAP_DAC_OVERRIDE and /var/lib/dsh is 0700 dsh-owned, so a root write
+      # here fails EACCES (observed 2026-11-09).
+      ${pkgs.util-linux}/bin/setpriv --reuid=dsh --regid=dsh --init-groups \
+        ${pkgs.bash}/bin/sh -c "printf '%s' '$idle' > '${activeSlotFile}.tmp' && mv '${activeSlotFile}.tmp' '${activeSlotFile}'"
+      echo "dsh-update: active slot is now $idle"
     elif [ "$rc" -ne 0 ]; then
       exit "$rc"
     fi
@@ -465,15 +561,14 @@ let
       "COREPACK_ENABLE_DOWNLOAD_PROMPT=0"
       "LD_LIBRARY_PATH=${gccLib}"
       "PATH=${nodeDir}/bin:${toolPath}:/run/current-system/sw/bin"
+      # In-session harness git (fetch/push on the fork) needs the deploy key
+      # non-interactively.
+      "GIT_SSH_COMMAND=${sshCommand}"
     ];
     # '-' prefix: the src clone does not exist on first boot — ExecStartPre's
     # provision step creates it; systemd then chdirs for ExecStart.
     WorkingDirectory = "-${src}";
     ExecStartPre = "${pkgs.util-linux}/bin/flock ${lockFile} ${provisionScript}";
-    # Same boot the repo's ./dsh wrapper performs (pnpm dsh = node --import
-    # tsx/esm apps/cli/src/bin.ts); the trust fence comes from the profile.
-    ExecStart =
-      "${nodeDir}/bin/node --import tsx/esm apps/cli/src/bin.ts web --no-open --host ${bind} --port ${portStr}";
     TimeoutStartSec = "45min";
     Restart = "on-failure";
     RestartSec = "5s";
@@ -509,7 +604,7 @@ in
     port = lib.mkOption {
       type = lib.types.port;
       default = 3080;
-      description = "Loopback port dsh binds; caddy's ai.ts.wyli.tech vhost reverse-proxies to it.";
+      description = "Loopback port of blue-green slot a; slot b takes port+1. Caddy's ai.ts.wyli.tech vhost health-checks both.";
     };
 
     stateDir = lib.mkOption {
@@ -534,16 +629,26 @@ in
     };
     users.groups.dsh = { };
 
-    systemd.services.dsh = {
-      description = "dsh — web AI harness (git checkout, auto-updating)";
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
-      wantedBy = [ "multi-user.target" ];
-      serviceConfig = dshServiceConfig;
-    };
-
-    systemd.services.dsh-update = {
-      description = "dsh — fast-forward the fork clone, rebuild, restart";
+    systemd.services = (lib.mapAttrs'
+      (slot: port: lib.nameValuePair "dsh@${slot}" {
+        description = "dsh — web AI harness, blue-green slot ${slot} (127.0.0.1:${toString port})";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        # Slot a is the only boot-enabled slot: on first boot there is no
+        # .active-slot, the default active slot is a, and b exists solely to
+        # receive flips (booting both would race the shared profile tree).
+        wantedBy = lib.optionals (slot == "a") [ "multi-user.target" ];
+        serviceConfig = dshServiceConfig // {
+          # Same boot the repo's ./dsh wrapper performs (pnpm dsh = node
+          # --import tsx/esm apps/cli/src/bin.ts); the trust fence comes from
+          # the profile.
+          ExecStart =
+            "${nodeDir}/bin/node --import tsx/esm apps/cli/src/bin.ts web --no-open --host ${bind} --port ${toString port}";
+        };
+      })
+      slotPorts) // {
+      dsh-update = {
+        description = "dsh — fast-forward the fork clone, rebuild, flip blue-green slots";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       serviceConfig = {
@@ -572,7 +677,23 @@ in
           "CAP_SETGID"
         ];
       };
+      };
     };
+
+    # Self-redeploy: the in-session harness runs as dsh and may start the
+    # update unit itself — and nothing else.
+    security.polkit.enable = true;
+    security.polkit.extraConfig = ''
+      polkit.addRule(function(action, subject) {
+        if (action.id == "org.freedesktop.systemd1.manage-units"
+            && subject.user == "dsh") {
+          var unit = action.lookup("unit");
+          if (unit == "dsh-update.service") {
+            return polkit.Result.YES;
+          }
+        }
+      });
+    '';
 
     systemd.timers.dsh-update = {
       description = "dsh — daily auto-update timer";

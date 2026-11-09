@@ -1,0 +1,13 @@
+{
+  "name": "homelab-caldav",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-dependency stdio MCP server: CalDAV events + todos on the homelab radicale (runs on plain node >= 24 via native type stripping — no install step, deliberately not a pnpm workspace member)",
+  "bin": {
+    "homelab-caldav": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
