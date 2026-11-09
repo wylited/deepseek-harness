@@ -88,6 +88,7 @@ rpc() { curl -sS -H 'Host: ai.ts.wyli.tech' -H 'content-type: application/json' 
   -X POST "https://ai.ts.wyli.tech/api/$1" -d "$(printf '{"type":"client-request",\
 "rpcId":"%s","method":"%s","payload":{"args":{"request":%s}}}' "$(uuidgen | tr A-Z a-z)" "$1" "$2")"; }
 
+mkdir -p <dir> first — workspace/create REQUIRES an existing directory
 rpc workspace/create '{"path":"/var/lib/dsh/harness-work"}'  # idempotent per realpath
 rpc session/create   '{"workspaceId":"<id from above>"}'     # binds cwd via the workspace
 rpc session/list     '{}'                                    # read-back
@@ -96,6 +97,13 @@ rpc session/list     '{}'                                    # read-back
 POST to `/api/...` paths only — the same body posted to `/` 405s. Idle
 sessions read back `running:false, blank:true`. Method names per controller
 live in `packages/api/*/src/index.ts` (`@Remote('name')`).
+
+Web search: prefer the perplexity-web plugin's tools (session JWT, works
+from any IP). The DuckDuckGo backends return EMPTY results from warden's
+datacenter IP — upstream anomaly-detection, not a configuration fault;
+installing `bun` (already in the dsh nix profile) made the server run, the
+results are just bot-walled. A Brave key (BRAVE_API_KEY in
+/etc/nix/dsh-env + kind: brave) would restore a dedicated search tool.
 
 Self-software: the dsh user is in `nix.settings.trusted-users` (fleet repo,
 `hosts/warden/default.nix`), so the harness can install its own packages:
