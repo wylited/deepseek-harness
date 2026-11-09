@@ -92,6 +92,17 @@ NEVER COMMIT:
 
 ## Verify before claiming deployed
 
+**UI rule — mobile is not optional.** Every client-side change (pages,
+panels, modals, CSS) MUST pass `node scripts/verify-mobile.mjs` (viewports
+390×844, 768×1024, 1440×900: no overflow — including the shell-clipped
+class, panels attach, palette fits, heatmap bounded, ≥13px fonts, zero
+console errors) AND stay desktop-identical at 1440. Follow upstream's
+idiom: one `@media (max-width: 767px)` block per stylesheet, dialogs become
+full-viewport `100dvh` sheets on mobile, hover styles only under
+`@media (hover: hover)`, dense grids scroll in bounded containers, tap
+targets ≥44px. Never assume a keyboard or a pointer.
+
+
 - `curl -sI https://ai.ts.wyli.tech/` returns HTTP 200; the UI's revision
   badge shows your pushed git hash.
 - `journalctl -u dsh-update -n 50` shows the fast-forward to your revision.
