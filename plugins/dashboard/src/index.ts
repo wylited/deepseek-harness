@@ -11,8 +11,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { DashboardService, resolveDshHome } from './host/service.ts'
 import { makeDashboardOverviewRoute } from './host/routes.ts'
 
-/** Host services this plugin requires: the web server that owns /api routes. */
-export const inject = ['webServer']
+/** Host services this plugin requires: the web server that owns /api routes, and the invocation flags (--trusted-host list). */
+export const inject = ['webServer', 'webStartup']
 
 /** Host plugin body: ledger service + overview route, tied to this fiber. */
 export function apply(ctx: Context): void {

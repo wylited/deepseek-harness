@@ -50,20 +50,60 @@ function isLoopbackHostAuthority(host: string | undefined): boolean {
 }
 
 /**
- * Whether this request may read the dashboard overview: a loopback socket
- * (the local browser and anything on this machine), or a request carrying
- * the browser same-origin markers whose `Host` also names the loopback host —
- * never a proxied request. The markers are client-supplied, so on a
- * non-loopback-bound listener they can be forged by any peer that can open a
- * TCP connection; the Host check keeps that arm loopback-only too.
+ * Whether an authority header matches a `--trusted-host` entry. Mirrors the
+ * connection layer's rule: an entry with a port matches exactly, a port-less
+ * entry matches any port on that hostname.
  */
-export function isDashboardRequestAllowed(request: IncomingMessage): boolean {
-  if (isProxiedRequest(request)) return false
-  if (isLoopbackAddress(request.socket.remoteAddress)) return true
-  const site = request.headers['sec-fetch-site']
-  if (site === 'same-origin' || site === 'same-site') {
-    if (!isLoopbackHostAuthority(request.headers.host)) return false
-    return isLoopbackAuthority(request.headers.origin) || isLoopbackAuthority(request.headers.referer)
+function isTrustedHostAuthority(header: string | undefined, trusted: readonly string[]): boolean {
+  if (header === undefined || trusted.length === 0) return false
+  const url = parseAuthorityLenient(header)
+  if (url === undefined) return false
+  const port = url.port === '' ? undefined : url.port
+  return trusted.some((entry) => {
+    const entryUrl = parseAuthorityLenient(entry)
+    return entryUrl !== undefined && entryUrl.hostname === url.hostname && (entryUrl.port === '' || entryUrl.port === port)
+  })
+}
+
+/** Parse a bare `host[:port]` authority or an absolute URL; undefined when neither. */
+function parseAuthorityLenient(value: string): URL | undefined {
+  try {
+    return new URL(value)
+  } catch {
+    try {
+      return new URL(`http://${value}`)
+    } catch {
+      return undefined
+    }
   }
-  return false
+}
+
+/**
+ * Whether this request may read the dashboard overview.
+ *
+ * Remote sockets are always rejected — the same-origin markers are
+ * client-supplied and forgeable, so only a loopback socket (the local
+ * browser, or a same-host reverse proxy such as caddy fronting the tailnet)
+ * may in. On a loopback socket:
+ * - a direct local caller (curl, CLI, local browser) is admitted as before;
+ * - a browser-proxied request (the proxy sets X-Forwarded-For) must carry
+ *   same-site markers whose Host/Origin/Referer name the loopback host or a
+ *   `--trusted-host` authority — forged markers from a remote socket never
+ *   reach this arm, and a foreign Host (evil.example) is still rejected.
+ */
+export function isDashboardRequestAllowed(request: IncomingMessage, trustedHosts: readonly string[] = []): boolean {
+  if (!isLoopbackAddress(request.socket.remoteAddress)) return false
+  const site = request.headers['sec-fetch-site']
+  if (site === 'cross-site') return false
+  if (site === 'same-origin' || site === 'same-site') {
+    const host = request.headers.host
+    const originOk =
+      isLoopbackAuthority(request.headers.origin) ||
+      isTrustedHostAuthority(request.headers.origin, trustedHosts) ||
+      isLoopbackAuthority(request.headers.referer) ||
+      isTrustedHostAuthority(request.headers.referer, trustedHosts)
+    if (!originOk) return false
+    return isLoopbackHostAuthority(host) || isTrustedHostAuthority(host, trustedHosts)
+  }
+  return true
 }

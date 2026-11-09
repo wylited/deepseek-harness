@@ -32,12 +32,13 @@ function writeJson(res: ServerResponse, status: number, body: unknown, headers: 
  * per-session leaderboards). Personal usage data behind the loopback fence —
  * see loopback.ts.
  */
-export function makeDashboardOverviewRoute(_ctx: Context, service: DashboardService): WebRoute {
+export function makeDashboardOverviewRoute(ctx: Context, service: DashboardService): WebRoute {
   return {
     kind: 'exact',
     path: DASHBOARD_API_PREFIX + '/overview',
     handler: (req: IncomingMessage, res: ServerResponse): void => {
-      if (!isDashboardRequestAllowed(req)) {
+      const trustedHosts = ctx.get('webStartup')?.trustedHosts ?? []
+      if (!isDashboardRequestAllowed(req, trustedHosts)) {
         writeJson(res, 403, { ok: false, error: 'forbidden: loopback-only' })
         return
       }
