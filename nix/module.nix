@@ -367,17 +367,18 @@ let
     built_rev=$(${pkgs.coreutils}/bin/cat ${builtMarker} 2>/dev/null || true)
     if [ "$head_rev" != "$built_rev" ] || [ ! -d "$src/node_modules" ]; then
       (
-        cd "$src" &&
-          DSH_BUILD_CLIENT_PROFILE=local \
-            DSH_CLIENT_VERSION=${clientVersion} \
-            DSH_CLIENT_COMMIT_HASH=wyli \
-            DSH_CLIENT_GIT_DIRTY=false \
-            DSH_TELEMETRY_DISABLED=1 \
-            COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME=${corepackHome} \
-            ${nodeDir}/bin/corepack pnpm install --frozen-lockfile &&
-          DSH_TELEMETRY_DISABLED=1 \
-            COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME=${corepackHome} \
-            ${nodeDir}/bin/corepack pnpm run build
+        cd "$src"
+        # Exported for BOTH commands: `VAR=.. cmd1 && cmd2` binds the prefixes
+        # to cmd1 only — the bare build then derives the client hash from git
+        # (observed: sidebar badge rendered the commit hash instead of 'wyli').
+        export DSH_BUILD_CLIENT_PROFILE=local
+        export DSH_CLIENT_VERSION=${clientVersion}
+        export DSH_CLIENT_COMMIT_HASH=wyli
+        export DSH_CLIENT_GIT_DIRTY=false
+        export DSH_TELEMETRY_DISABLED=1
+        export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME=${corepackHome}
+        ${nodeDir}/bin/corepack pnpm install --frozen-lockfile &&
+          ${nodeDir}/bin/corepack pnpm run build
       )
       # The profile's link: plugins ship lib/ as a gitignored build output —
       # a fresh clone has none, and the web profile fails their import
