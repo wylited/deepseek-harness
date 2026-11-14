@@ -1,4 +1,4 @@
-# homelab-caldav (MCP stdio server)
+# caldav-tools (MCP stdio server)
 
 Gives dsh agents CalDAV access to the homelab radicale server (events + todos).
 Zero dependencies: plain node ≥ 24 runs it directly via native type stripping —
@@ -11,7 +11,7 @@ server (field shape per `packages/mcp/mcp-manager`; stdio rows take
   kind: custom
   transport: stdio
   command: node
-  args: [ '<repo>/mcp/homelab-caldav/src/index.ts' ]
+  args: [ '<repo>/plugins/caldav-tools/src/index.ts' ]
   env:
     RADICALE_URL: https://dav.ts.wyli.tech
     RADICALE_USER: wyli
@@ -75,5 +75,5 @@ RADICALE_URL=… RADICALE_USER=… RADICALE_PASS=… \
   "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}" \
   "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}" \
   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"cal_list_calendars\",\"arguments\":{}}}" \
-  | node mcp/homelab-caldav/src/index.ts'
+  | node plugins/caldav-tools/src/index.ts'
 ```

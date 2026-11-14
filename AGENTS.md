@@ -32,6 +32,14 @@ Prod layout on warden, all under `/var/lib/dsh`:
 - `.built-rev` — last provisioned revision (marker, not source).
 - `.active-slot` — which slot serves.
 - `home/` — `DSH_HOME`: profile, sessions, ledger. EPHEMERAL STATE, not source.
+- `home/profiles/web/cordis.user.yml` — the RUNTIME config layer: an
+  agent-writable overlay loaded via `--patch` on every slot boot, composed
+  after the store's `cordis.patch.yml`, and NEVER reconciled by provision.
+  Instance config (MCP servers, provider routes, plugin tuning) belongs
+  here: edit it and dsh hot-reloads — no rebuild, no push, no drain.
+  Config model: nix store = infrastructure profile, git fork = capability
+  code (`plugins/*`, incl. zero-dep `plugins/caldav-tools`), user.yml =
+  instance config.
 - `.ssh/` — deploy keys. NEVER leave the machine's context.
 - Secrets live OUTSIDE the repo: `/etc/nix/dsh-env` (root-only 0600
   EnvironmentFile: `ZAI_API_KEY`, `PERPLEXITY_JWT`).

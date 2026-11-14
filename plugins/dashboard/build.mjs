@@ -74,6 +74,11 @@ try {
     outfile: path.join(here, 'lib/index.js'),
     legalComments: 'none',
     logLevel: 'info',
+    // Plugins are not pnpm workspace members, so bare imports resolve only
+    // against the repo root's own deps; schemastery is a vendored override
+    // (link:vendor/schemastery) that only workspace members see. Alias to its
+    // source — lib/ is a build output a fresh clone may not have.
+    alias: { '@deepseek-ai/schemastery': path.join(repoRoot, 'vendor/schemastery/src/index.ts') },
   })
 } finally {
   rmSync(path.join(here, 'src/client/none.generated.ts'), { force: true })

@@ -336,28 +336,6 @@ let
     - insert:
         - id: keys
           name: keys
-    - id: search-mcp
-      config:
-        defaultServer: ddg-html
-        maxResults: 8
-        searchTimeoutMs: 30000
-        servers:
-          - id: ddg-html
-            kind: custom
-            transport: stdio
-            command: npx
-            args: [ '-y', 'duckduckgo-mcp' ]
-            toolName: search
-            maxResults: 8
-          # Homelab CalDAV (radicale, dav.ts.wyli.tech): search/add/update
-          # events + todos. Zero-dep stdio MCP server shipped in the fork;
-          # credentials from the service env (/etc/nix/dsh-env:
-          # RADICALE_URL / RADICALE_USER / RADICALE_PASS).
-          - id: homelab-caldav
-            kind: custom
-            transport: stdio
-            command: node
-            args: [ '${src}/mcp/homelab-caldav/src/index.ts' ]
 
     # Tokenless admission on the trusted tailnet: any request passing the
     # Host/Origin fence (loopback, the listener's bind IP, or this list) is
@@ -374,7 +352,49 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
           # fence always admits the listener's loopback bind literal.
           - localhost
   '';
+  # Agent-writable user overlay (cordis.user.yml): loaded at boot via
+  # --patch, composed AFTER cordis.patch.yml, and NEVER reconciled by the
+  # provision script. This is the runtime layer of the config model:
+  #   nix store   — infrastructure profile (cordis.yml/cordis.patch.yml/…)
+  #   git fork    — capability code (plugins, providers, this module)
+  #   user.yml    — instance config the harness and its agents edit freely
+  # The provision step seeds it from this template only when absent.
+  profileUserSeed = pkgs.writeText "dsh-profile-cordis.user.yml" ''
+    # cordis.user.yml — warden instance overlay (agent-writable, hot-reloaded).
+    # Edits here survive every provision, restart, and dsh-update flip.
+    # Patch rows address base-bundle rows by id and REPLACE the complete
+    # config value, so keep each row self-contained.
 
+    # Web search (search-mcp bundle).
+    - id: search-mcp
+      config:
+        defaultServer: ddg-html
+        maxResults: 8
+        searchTimeoutMs: 30000
+        servers:
+          - id: ddg-html
+            kind: custom
+            transport: stdio
+            command: npx
+            args: [ '-y', 'duckduckgo-mcp' ]
+            toolName: search
+            maxResults: 8
+
+    # MCP bridges (dashboard plugin, mcp-client child fibers). Each bridge
+    # spawns one stdio MCP server from the fork clone and projects its tools
+    # as mcp__<serverName>__<tool>. scriptPath is clone-root relative.
+    # caldav-tools: homelab radicale (dav.ts.wyli.tech) events + todos;
+    # credentials ride the service env (/etc/nix/dsh-env: RADICALE_URL /
+    # RADICALE_USER / RADICALE_PASS) and are restated past mcp-client's env
+    # scrubbing — add or retune bridges here, no rebuild needed.
+    - id: dashboard
+      config:
+        mcpBridges:
+          - serverName: caldav
+            scriptPath: plugins/caldav-tools/src/index.ts
+            envFromProcess: [ RADICALE_URL, RADICALE_USER, RADICALE_PASS ]
+            failOnStartupError: false
+  '';
   profileStore = pkgs.runCommand "dsh-profile-web" { } ''
     mkdir -p $out
     install -m 444 ${profileCordisYml} $out/cordis.yml
@@ -466,6 +486,13 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
         dirty=1
       fi
     done
+
+    # --- agent-writable user overlay ----------------------------------------
+    # cordis.user.yml rides --patch on every boot; the store never owns it.
+    # Seed only when absent — once it exists it is entirely the harness's.
+    if [ ! -e "$profileDir/cordis.user.yml" ]; then
+      ${pkgs.coreutils}/bin/install -m 600 ${profileUserSeed} "$profileDir/cordis.user.yml"
+    fi
 
     # --- harness workspace alias ---------------------------------------------
     # Profiles cannot declare named workspaces (workspaces are runtime UI
@@ -1020,10 +1047,13 @@ in
           # Same boot the repo's ./dsh wrapper performs (pnpm dsh = node
           # --import tsx/esm apps/cli/src/bin.ts); the connection layer's trust
           # fence comes from the profile, the dashboard host fence from these
-          # --trusted-host flags (webStartup.trustedHosts).
+          # --trusted-host flags (webStartup.trustedHosts). cordis.user.yml is
+          # the agent-writable runtime layer: composed after cordis.patch.yml,
+          # never reconciled by provision.
           ExecStart =
             "${nodeDir}/bin/node --import tsx/esm apps/cli/src/bin.ts web --no-open --host ${bind} --port ${toString port}"
-            + lib.concatMapStrings (h: " --trusted-host ${h}") cfg.trustedHosts;
+            + lib.concatMapStrings (h: " --trusted-host ${h}") cfg.trustedHosts
+            + " --patch ${home}/profiles/web/cordis.user.yml";
         };
       })
       slotPorts) // {
