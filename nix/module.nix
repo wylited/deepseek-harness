@@ -1050,10 +1050,14 @@ in
           # --trusted-host flags (webStartup.trustedHosts). cordis.user.yml is
           # the agent-writable runtime layer: composed after cordis.patch.yml,
           # never reconciled by provision.
+          # --patch is a LAUNCHER flag (parseDshArgs), so it must precede the
+          # profile positional; anything after `web` is passed through to the
+          # web app's own parser, which rejects it.
           ExecStart =
-            "${nodeDir}/bin/node --import tsx/esm apps/cli/src/bin.ts web --no-open --host ${bind} --port ${toString port}"
-            + lib.concatMapStrings (h: " --trusted-host ${h}") cfg.trustedHosts
-            + " --patch ${home}/profiles/web/cordis.user.yml";
+            "${nodeDir}/bin/node --import tsx/esm apps/cli/src/bin.ts"
+            + " --patch ${home}/profiles/web/cordis.user.yml --profile web"
+            + " --no-open --host ${bind} --port ${toString port}"
+            + lib.concatMapStrings (h: " --trusted-host ${h}") cfg.trustedHosts;
         };
       })
       slotPorts) // {
