@@ -380,7 +380,7 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
             toolName: search
             maxResults: 8
 
-    # MCP bridges (dashboard plugin, mcp-client child fibers). Each bridge
+    # MCP bridges (dashboard plugin → mcp-manager registrations). Each bridge
     # spawns one stdio MCP server from the fork clone and projects its tools
     # as mcp__<serverName>__<tool>. scriptPath is clone-root relative.
     # caldav-tools: homelab radicale (dav.ts.wyli.tech) events + todos;
@@ -393,7 +393,6 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
           - serverName: caldav
             scriptPath: plugins/caldav-tools/src/index.ts
             envFromProcess: [ RADICALE_URL, RADICALE_USER, RADICALE_PASS ]
-            failOnStartupError: false
   '';
   profileStore = pkgs.runCommand "dsh-profile-web" { } ''
     mkdir -p $out
