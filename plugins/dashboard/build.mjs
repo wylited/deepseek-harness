@@ -74,10 +74,11 @@ try {
     outfile: path.join(here, 'lib/index.js'),
     legalComments: 'none',
     logLevel: 'info',
-    // Plugins are not pnpm workspace members, so bare imports resolve only
-    // against the repo root's own deps; schemastery is a vendored override
-    // (link:vendor/schemastery) that only workspace members see. Alias to its
-    // source — lib/ is a build output a fresh clone may not have.
+    // Externalize the mcp client: bundling pulls its CJS dep chain
+    // (cross-spawn et al) through esbuild's ESM __require shim, which throws
+    // when the harness loads this plugin as pure ESM. Runtime resolution
+    // walks up to the clone root's workspace node_modules.
+    external: ['@deepseek-ai/dsh-mcp-client'],
     alias: { '@deepseek-ai/schemastery': path.join(repoRoot, 'vendor/schemastery/src/index.ts') },
   })
 } finally {
