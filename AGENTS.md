@@ -35,8 +35,10 @@ Prod layout on warden, all under `/var/lib/dsh`:
 - `home/profiles/web/cordis.user.yml` — the RUNTIME config layer: an
   agent-writable overlay loaded via `--patch` on every slot boot, composed
   after the store's `cordis.patch.yml`, and NEVER reconciled by provision.
-  Instance config (MCP servers, provider routes, plugin tuning) belongs
-  here: edit it and dsh hot-reloads — no rebuild, no push, no drain.
+  Instance config (MCP bridges, provider routes, plugin tuning) belongs
+  here: edits apply on the next slot restart (`systemctl restart
+  dsh@<slot>`, ~10 s) or the app's profile-reload RPC — no rebuild, no
+  push, no drain; the file is not watched.
   Config model: nix store = infrastructure profile, git fork = capability
   code (`plugins/*`, incl. zero-dep `plugins/caldav-tools`), user.yml =
   instance config.
