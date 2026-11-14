@@ -79,6 +79,7 @@ function mcpBridgeConfig(entry: McpBridge): McpClientConfig {
 
 /** Host plugin body: ledger service + overview route + MCP bridges, tied to this fiber. */
 export function apply(ctx: Context, config: Config): void {
+  console.error('[dbg] dashboard apply config:', JSON.stringify(config))
   const dshHomeDir = resolveDshHome()
   // The ledger dir is created on demand by the flush, but an early missing
   // dir turns the first write into an ELOOP-free, predictable failure; make
