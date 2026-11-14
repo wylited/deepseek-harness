@@ -68,7 +68,7 @@ let
   };
 
   # Canonical source path: a symlink to the tree whose build the shared
-  # profile (link: plugin deps, homelab-caldav MCP args, home/harness alias)
+  # profile (link: plugin deps, caldav-tools bridge args, home/harness alias)
   # resolves through. Repointed only at a verified flip (updater) or a
   # rollback (watchdog); the active slot's own tree is never rewritten.
   src = "${cfg.stateDir}/src";
