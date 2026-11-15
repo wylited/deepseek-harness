@@ -25,8 +25,9 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { compactTokens, fullTimeLabel, relativeTime } from './format.ts'
 import type { DashboardOverviewView, UsageDayPoint } from '../core/view.ts'
+import type { DashboardSummariesBody, DashboardSummaryReport } from '../core/summary.ts'
 import {
-  FEED_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey,
+  RUNNING_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey,
   type AgentRow, type SessionsFace, type SessionsListState, type WorkspacesFace,
   type WorkspaceGroupNode, type WorkspaceTarget,
 } from './workspace.ts'
@@ -76,6 +77,8 @@ export interface DashboardFace {
   /** uiWorkspace.openSession: a SessionId string is a valid SessionTarget. */
   openSession(sessionId: string): void
   fetchOverview(): Promise<DashboardOverviewView | undefined>
+  /** Same-origin read of the host summaries report for the named sessions. */
+  fetchSummaries(ids: readonly string[]): Promise<DashboardSummariesBody | undefined>
   version: string | undefined
 }
 
@@ -147,14 +150,15 @@ function statusOf(events: readonly WireEvent[]): string | undefined {
 /**
  * Live status line for one running session: a passive per-session event
  * tail (snapshot + live frames) through the generated session facade —
- * subscribed only while the row shows, aborted on unmount. Stream failure
- * returns undefined, the degraded `working…` rendering.
+ * subscribed only while the row shows and `enabled` holds, aborted on
+ * unmount. Stream failure returns undefined, the degraded `working…`
+ * rendering.
  */
-function useSessionTail(face: DashboardFace, sessionId: string): string | undefined {
+function useSessionTail(face: DashboardFace, sessionId: string, enabled: boolean): string | undefined {
   const [line, setLine] = useState<string | undefined>(undefined)
   useEffect(() => {
     const remote = face.sessionRemote
-    if (remote === undefined) return
+    if (remote === undefined || !enabled) return
     const controller = new AbortController()
     let alive = true
     const events: WireEvent[] = []
@@ -196,7 +200,7 @@ function useSessionTail(face: DashboardFace, sessionId: string): string | undefi
       alive = false
       controller.abort()
     }
-  }, [face, sessionId])
+  }, [face, sessionId, enabled])
   return line
 }
 
@@ -254,14 +258,16 @@ async function submitAnswer(
 }
 
 /** The inline answer box under one agent row. */
-function InlineAnswer({ face, sessionId, question }: {
+function InlineAnswer({ face, sessionId, question, hint = true }: {
   face: DashboardFace
   sessionId: string
   question: PendingQuestionInfo
+  /** Whether the form leads with the question text (needs-you shows it above). */
+  hint?: boolean
 }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
-  const hint = question.questions.map(item => item.question).join(' · ')
+  const hintText = question.questions.map(item => item.question).join(' · ')
   const submit = (): void => {
     const text = value.trim()
     if (text === '' || busy) return
@@ -273,7 +279,7 @@ function InlineAnswer({ face, sessionId, question }: {
   }
   return (
     <form className="wd-answer" onSubmit={event => { event.preventDefault(); submit() }}>
-      {hint !== '' && <span className="wd-answer-q" title={hint}>{hint}</span>}
+      {hint && hintText !== '' && <span className="wd-answer-q" title={hintText}>{hintText}</span>}
       <input
         className="wd-answer-input"
         type="text"
@@ -318,19 +324,27 @@ function VersionChip({ version }: { version: string | undefined }) {
   )
 }
 
-/** One agent row: status dot, label, badges, live tail, inline answer. */
-export function FeedItem({ row, now, face, question }: {
+/**
+ * One agent row: status dot, label, badges, live tail, inline answer. A
+ * running row streams its live tail; an idle row shows the host's cached
+ * status summary when one is known (`summary`), else its last tail line,
+ * else a plain idle time — never an active verb.
+ */
+export function FeedItem({ row, now, face, question, summary }: {
   row: AgentRow
   now: number
   face: DashboardFace
   question: PendingQuestionInfo | undefined
+  /** Host-generated idle status summary for this session, when known. */
+  summary?: string | undefined
 }) {
-  const status = useSessionTail(face, row.sessionId)
+  const status = useSessionTail(face, row.sessionId, row.running || summary === undefined)
   return (
     <div className="wd-feeditem">
       <button
         type="button"
         className="wd-row"
+        data-needs={question !== undefined || undefined}
         onClick={() => { face.openSession(row.sessionId) }}
         title={`${row.label} — ${fullTimeLabel(row.updatedAt)}`}
       >
@@ -345,8 +359,10 @@ export function FeedItem({ row, now, face, question }: {
         {row.model !== undefined && <span className="wd-badge">{row.model}</span>}
         <span className="wd-when">{relativeTime(row.updatedAt, now)}</span>
       </button>
-      <div className="wd-row-status" data-degraded={status === undefined || undefined}>
-        {status ?? 'working…'}
+      <div className="wd-row-status" data-degraded={row.running && status === undefined || undefined}>
+        {!row.running && summary !== undefined
+          ? summary
+          : status ?? (row.running ? 'working…' : `idle · ${relativeTime(row.updatedAt, now)}`)}
       </div>
       {question !== undefined && <InlineAnswer face={face} sessionId={row.sessionId} question={question} />}
     </div>
@@ -358,9 +374,12 @@ export function FeedItem({ row, now, face, question }: {
  * its rows, then nested child workspaces indented under a thin rule. The
  * label opens the workspace's own panel; the caret toggles collapse
  * (session-local state, never persisted). Reused by the workspace panel
- * for child workspaces.
+ * for child workspaces. `questions`/`summaries` override the per-row
+ * pending-question and idle-summary reads when the caller polled fresher
+ * host facts (the landing page does); absent, both fall back to the
+ * session list's projections.
  */
-export function WorkspaceGroup({ node, depth, now, face, state, collapsed, collapsedSet, onToggle }: {
+export function WorkspaceGroup({ node, depth, now, face, state, collapsed, collapsedSet, onToggle, questions, summaries }: {
   node: WorkspaceGroupNode
   depth: number
   now: number
@@ -371,6 +390,10 @@ export function WorkspaceGroup({ node, depth, now, face, state, collapsed, colla
   /** The shared collapse-key set children read. */
   collapsedSet: ReadonlySet<string>
   onToggle(key: string): void
+  /** Per-session question override from the landing's summaries poll. */
+  questions?: ReadonlyMap<string, PendingQuestionInfo | undefined> | undefined
+  /** Per-session idle-summary override from the landing's summaries poll. */
+  summaries?: ReadonlyMap<string, string> | undefined
 }) {
   const running = node.rows.filter(row => row.running).length
   return (
@@ -410,19 +433,11 @@ export function WorkspaceGroup({ node, depth, now, face, state, collapsed, colla
                 row={row}
                 now={now}
                 face={face}
-                question={pendingQuestionOf(state.projectionsBySession[row.sessionId]?.values)}
+                question={questions?.get(row.sessionId) ?? pendingQuestionOf(state.projectionsBySession[row.sessionId]?.values)}
+                summary={summaries?.get(row.sessionId)}
               />
             ))}
           </div>
-          {node.hidden > 0 && node.path !== undefined && (
-            <button
-              type="button"
-              className="wd-group-more"
-              onClick={() => { face.openWorkspace({ slug: node.slug, path: node.path!, label: node.label }) }}
-            >
-              +{node.hidden} sleeping — open {node.label}
-            </button>
-          )}
           {node.children.length > 0 && (
             <div className="wd-group-kids">
               {node.children.map(child => (
@@ -436,6 +451,8 @@ export function WorkspaceGroup({ node, depth, now, face, state, collapsed, colla
                   collapsed={collapsedSet.has(workspaceKey(child))}
                   collapsedSet={collapsedSet}
                   onToggle={onToggle}
+                  questions={questions}
+                  summaries={summaries}
                 />
               ))}
             </div>
@@ -446,7 +463,76 @@ export function WorkspaceGroup({ node, depth, now, face, state, collapsed, colla
   )
 }
 
-/** The landing panel: the grouped agents feed, then the year heatmap. */
+/** Poll cadence for the host summaries report (idle summaries + questions). */
+const SUMMARIES_POLL_MS = 30_000
+
+/** At most this many session ids one summaries poll names (host caps too). */
+const SUMMARIES_ID_CAP = 40
+
+/**
+ * The host's per-session facts for the visible rows: fresh pending-question
+ * reads and cached idle status summaries. The poll never blocks rendering —
+ * cards show time-only statuses first and fill in as reports land.
+ */
+function useSummaryReports(face: DashboardFace, ids: readonly string[]): ReadonlyMap<string, DashboardSummaryReport> {
+  const [reports, setReports] = useState<ReadonlyMap<string, DashboardSummaryReport>>(() => new Map())
+  const idsKey = ids.slice(0, SUMMARIES_ID_CAP).join(',')
+  useEffect(() => {
+    if (idsKey === '') return undefined
+    let cancelled = false
+    const load = (): void => {
+      face.fetchSummaries(idsKey.split(',')).then(body => {
+        if (cancelled || body === undefined || !body.ok) return
+        setReports(new Map(body.summaries.map(report => [report.sessionId, report] as const)))
+      }).catch(() => {})
+    }
+    load()
+    const timer = window.setInterval(load, SUMMARIES_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [face, idsKey])
+  return reports
+}
+
+/**
+ * The question a row surfaces. The host poll is the fresher truth — no
+ * pending report means no question, even when the list's projections still
+ * carry a stale batch. When both agree the projection wins: it names the
+ * question ids the structured answer RPC needs. A host-only pending read
+ * (or a call-id mismatch, i.e. a stale projection batch) falls back to the
+ * queued-prompt reply path.
+ */
+function questionInfoOf(
+  state: SessionsListState,
+  reports: ReadonlyMap<string, DashboardSummaryReport>,
+  sessionId: string,
+): PendingQuestionInfo | undefined {
+  const fromProjection = pendingQuestionOf(state.projectionsBySession[sessionId]?.values)
+  const report = reports.get(sessionId)
+  if (report === undefined) return fromProjection
+  const pending = report.pending
+  if (pending === undefined) return undefined
+  if (fromProjection !== undefined && fromProjection.questions.length > 0
+    && (pending.callId === undefined || fromProjection.callId === pending.callId)) {
+    return fromProjection
+  }
+  return { callId: undefined, questions: [{ id: 'pending', question: pending.question }] }
+}
+
+/** Every row of a node's subtree (its own plus all descendants'). */
+function subtreeRows(node: WorkspaceGroupNode): readonly AgentRow[] {
+  return [...node.rows, ...node.children.flatMap(subtreeRows)]
+}
+
+/** Running sessions in a node's subtree. */
+function subtreeRunningCount(node: WorkspaceGroupNode): number {
+  return node.rows.filter(row => row.running).length
+    + node.children.reduce((sum, child) => sum + subtreeRunningCount(child), 0)
+}
+
+/** The landing panel: needs-you rows, running workspace rows, then the grid. */
 export function DashboardPage(face: DashboardFace) {
   const state = useSyncExternalStore(face.sessions.list.subscribe, face.sessions.list.getSnapshot)
   const workspaces = useOptionalStore(face.workspaces?.list)
@@ -455,18 +541,57 @@ export function DashboardPage(face: DashboardFace) {
   const refreshAttempted = useRef(new Set<string>())
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
 
-  // The feed always shows every running agent; the most recent idle ones
-  // pad the rest of the FEED_ROW_CAP budget. Grouping keeps the whole set
-  // so per-workspace counts and the "+sleeping" notes stay honest.
+  const rows = useMemo(() => projectRows(state, workspaces.items), [state, workspaces])
   const groups = useMemo(
-    () => buildWorkspaceGroups(
-      projectRows(state, workspaces.items),
-      workspaces.items,
-      { cap: FEED_ROW_CAP },
-    ),
-    [state, workspaces],
+    () => buildWorkspaceGroups(rows, workspaces.items),
+    [rows, workspaces],
   )
-  const rows = useMemo(() => groups.roots.flatMap(node => collapseRows(node)), [groups])
+
+  // Host facts for the visible sessions; the poll answers from cache and
+  // kicks lazy regeneration, so the first paint never waits on a model.
+  const reportIds = useMemo(() => rows.map(row => row.sessionId), [rows])
+  const reports = useSummaryReports(face, reportIds)
+
+  // Per-session question info and idle summary texts, merged from the list
+  // projections and the host poll (see questionInfoOf).
+  const questions = useMemo(() => {
+    const map = new Map<string, PendingQuestionInfo | undefined>()
+    for (const row of rows) map.set(row.sessionId, questionInfoOf(state, reports, row.sessionId))
+    return map
+  }, [state, reports, rows])
+  const summaryTexts = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const row of rows) {
+      const text = reports.get(row.sessionId)?.summary
+      if (text !== undefined) map.set(row.sessionId, text)
+    }
+    return map
+  }, [rows, reports])
+  const needsYou = useMemo(
+    () => rows.filter(row => questions.get(row.sessionId) !== undefined).sort((a, b) => b.updatedAt - a.updatedAt),
+    [rows, questions],
+  )
+  // The running rows drop the answer box for sessions the needs-you section
+  // already carries, so one question never renders two forms.
+  const groupQuestions = useMemo(() => {
+    const map = new Map(questions)
+    for (const row of needsYou) map.set(row.sessionId, undefined)
+    return map
+  }, [questions, needsYou])
+
+  // Workspaces with running sessions lead as full-width rows, most recent
+  // activity first, capped; every other workspace (and the row overflow)
+  // folds into the one compact grid row below.
+  const { runningRoots, gridRoots, runningWorkspaceCount } = useMemo(() => {
+    const withRunning = groups.roots.filter(node => subtreeRunningCount(node) > 0)
+    const capped = withRunning.slice(0, RUNNING_ROW_CAP)
+    const cappedKeys = new Set(capped.map(workspaceKey))
+    return {
+      runningRoots: capped,
+      gridRoots: groups.roots.filter(node => !cappedKeys.has(workspaceKey(node))),
+      runningWorkspaceCount: withRunning.length,
+    }
+  }, [groups])
 
   // Cold model names arrive through the projections read (same RPC the
   // workspace list uses for cold titles); one attempt per session per mount.
@@ -511,18 +636,43 @@ export function DashboardPage(face: DashboardFace) {
         <span className="wd-header-spring" />
         <button type="button" className="wd-navbtn" onClick={face.openUsage}>Usage statistics</button>
       </header>
+      {needsYou.length > 0 && (
+        <section className="wd-section wd-needs-section">
+          <div className="wd-section-head">
+            <h2 className="wd-section-title">Needs you</h2>
+            <span className="wd-section-note">
+              {needsYou.length === 1 ? 'one agent is waiting on your reply' : `${needsYou.length} agents are waiting on your reply`}
+            </span>
+          </div>
+          <div className="wd-feed">
+            {needsYou.map(row => (
+              <NeedsYouItem
+                key={row.sessionId}
+                row={row}
+                now={now}
+                face={face}
+                question={questions.get(row.sessionId)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
       <section className="wd-section">
         <div className="wd-section-head">
           <h2 className="wd-section-title">Ongoing agents</h2>
-          <span className="wd-section-note">all active, recent idles pad to {FEED_ROW_CAP} · a workspace name opens its page</span>
+          <span className="wd-section-note">
+            {runningRoots.length === 0
+              ? 'nothing running · resting workspaces are in the grid below'
+              : `${runningWorkspaceCount} running, most recent first${runningWorkspaceCount > runningRoots.length ? ` · first ${runningRoots.length} shown` : ''} · a workspace name opens its page`}
+          </span>
         </div>
         {state.phase === 'pending'
           ? <div className="wd-empty">Loading sessions…</div>
           : rows.length === 0
             ? <div className="wd-zzz" role="status">💤 all agents sleeping</div>
-            : (
+            : runningRoots.length > 0 && (
               <div className="wd-groups">
-                {groups.roots.map(node => (
+                {runningRoots.map(node => (
                   <WorkspaceGroup
                     key={workspaceKey(node)}
                     node={node}
@@ -533,19 +683,133 @@ export function DashboardPage(face: DashboardFace) {
                     collapsed={collapsed.has(workspaceKey(node))}
                     collapsedSet={collapsed}
                     onToggle={toggle}
+                    questions={groupQuestions}
+                    summaries={summaryTexts}
                   />
                 ))}
               </div>
             )}
       </section>
+      {state.phase !== 'pending' && rows.length > 0 && gridRoots.length > 0 && (
+        <section className="wd-section">
+          <div className="wd-section-head">
+            <h2 className="wd-section-title">Workspaces</h2>
+            <span className="wd-section-note">{gridRoots.length} resting · scroll for more</span>
+          </div>
+          <div className="wd-grid-scroll">
+            <div className="wd-grid">
+              {gridRoots.map(node => (
+                <WorkspaceCard
+                  key={workspaceKey(node)}
+                  node={node}
+                  now={now}
+                  face={face}
+                  questions={questions}
+                  summaries={summaryTexts}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
       {view !== undefined && <HeatmapSection view={view} />}
     </div>
   )
 }
 
-/** The rows a node actually shows: its own plus every shown descendant's. */
-function collapseRows(node: WorkspaceGroupNode): readonly AgentRow[] {
-  return [...node.rows, ...node.children.flatMap(collapseRows)]
+/**
+ * The prominent needs-you row: accent dot and edge, the open question's
+ * text, and the inline answer box (structured RPC when the projection
+ * named the batch, queued prompt otherwise).
+ */
+function NeedsYouItem({ row, now, face, question }: {
+  row: AgentRow
+  now: number
+  face: DashboardFace
+  question: PendingQuestionInfo | undefined
+}) {
+  if (question === undefined) return null
+  const text = question.questions.map(item => item.question).join(' · ') || 'needs your reply'
+  return (
+    <div className="wd-feeditem wd-needitem">
+      <button
+        type="button"
+        className="wd-row"
+        onClick={() => { face.openSession(row.sessionId) }}
+        title={`${row.label} — ${fullTimeLabel(row.updatedAt)}`}
+      >
+        <span className="wd-dot" data-needs aria-hidden="true" />
+        <span className="wd-row-main">
+          <span className="wd-row-title">{row.label}</span>
+          {row.subagent && row.parentLabel !== undefined && (
+            <span className="wd-row-sub">↳ {row.parentLabel}</span>
+          )}
+        </span>
+        {row.model !== undefined && <span className="wd-badge">{row.model}</span>}
+        <span className="wd-when">{relativeTime(row.updatedAt, now)}</span>
+      </button>
+      <div className="wd-need-q" title={text}>{text}</div>
+      <InlineAnswer face={face} sessionId={row.sessionId} question={question} hint={false} />
+    </div>
+  )
+}
+
+/**
+ * One compact workspace card in the landing's single grid row: label, live
+ * or resting status line, newest activity. Running cards stream a tail;
+ * resting cards show the host's cached summary. The card opens the
+ * workspace's panel (or its newest session when nothing names a path).
+ */
+function WorkspaceCard({ node, now, face, questions, summaries }: {
+  node: WorkspaceGroupNode
+  now: number
+  face: DashboardFace
+  questions: ReadonlyMap<string, PendingQuestionInfo | undefined>
+  summaries: ReadonlyMap<string, string>
+}) {
+  const sorted = useMemo(
+    () => [...subtreeRows(node)].sort((a, b) => b.updatedAt - a.updatedAt),
+    [node],
+  )
+  const runningCount = useMemo(() => subtreeRunningCount(node), [node])
+  const top: AgentRow | undefined = runningCount > 0
+    ? sorted.find(row => row.running) ?? sorted[0]
+    : sorted[0]
+  const tail = useSessionTail(face, top?.sessionId ?? '', top !== undefined && runningCount > 0)
+  if (top === undefined) return null
+  const needsYou = sorted.some(row => questions.get(row.sessionId) !== undefined)
+  const summary = runningCount > 0 ? undefined : summaries.get(top.sessionId)
+  const status = runningCount > 0
+    ? tail ?? 'working…'
+    : summary ?? `idle · ${relativeTime(top.updatedAt, now)}`
+  const open = (): void => {
+    if (node.path !== undefined) face.openWorkspace({ slug: node.slug, path: node.path, label: node.label })
+    else face.openSession(top.sessionId)
+  }
+  return (
+    <button
+      type="button"
+      className="wd-gridcard"
+      data-running={runningCount > 0 || undefined}
+      data-needs={needsYou || undefined}
+      onClick={open}
+      title={`${node.label} — ${fullTimeLabel(top.updatedAt)}`}
+    >
+      <span className="wd-gridcard-head">
+        <span className="wd-dot" data-running={runningCount > 0 || undefined} data-needs={needsYou || undefined} aria-hidden="true" />
+        <span className="wd-gridcard-title">{node.label}</span>
+        <span className="wd-when">{relativeTime(top.updatedAt, now)}</span>
+      </span>
+      <span className="wd-gridcard-status" data-degraded={runningCount > 0 && tail === undefined || undefined}>
+        {status}
+      </span>
+      {sorted.length > 1 && (
+        <span className="wd-gridcard-count">
+          {runningCount > 0 ? `${runningCount} of ${sorted.length} running` : `${sorted.length} sessions`}
+        </span>
+      )}
+    </button>
+  )
 }
 
 /** One headline card. */

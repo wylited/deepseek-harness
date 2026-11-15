@@ -1,8 +1,8 @@
 /**
  * dashboard, node half. Registers the usage-ledger service and its
- * same-origin overview route; the browser half ships through
- * `exports["./client"]` (same split as packages/client/ui-brand-official
- * and plugins/restyle).
+ * same-origin routes (the overview document and the per-session summaries
+ * report); the browser half ships through `exports["./client"]` (same split
+ * as packages/client/ui-brand-official and plugins/restyle).
  * @module dashboard
  */
 
@@ -13,7 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { McpServerRegistration } from '@deepseek-ai/dsh-mcp-manager'
 import { DashboardService, resolveDshHome } from './host/service.ts'
-import { makeDashboardOverviewRoute } from './host/routes.ts'
+import { makeDashboardOverviewRoute, makeDashboardSummariesRoute } from './host/routes.ts'
 
 /** Host services this plugin requires: the web server that owns /api routes, the invocation flags (--trusted-host list), and the MCP server manager that owns bridge instance lifecycles. */
 export const inject = ['webServer', 'webStartup', 'mcpManager']
@@ -78,6 +78,7 @@ export function apply(ctx: Context, config: Config): void {
   mkdirSync(dshHomeDir, { recursive: true })
   const service = new DashboardService(ctx, dshHomeDir)
   const disposeRoute = ctx.webServer.register(makeDashboardOverviewRoute(ctx, service))
+  const disposeSummariesRoute = ctx.webServer.register(makeDashboardSummariesRoute(ctx, service))
   service.start()
   // One manager registration per configured bridge: the manager owns the
   // mcp-client instance (connect, `mcp__<name>__*` tool registration,

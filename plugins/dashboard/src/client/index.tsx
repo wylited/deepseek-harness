@@ -1,10 +1,11 @@
 /**
  * dashboard, client half. Registers the main panels — the landing page
- * (`dashboard`, the workspace-grouped agents feed with live status lines,
- * inline answers, and the year heatmap), the usage statistics page
- * (`usage-stats`), and per-workspace sub-dashboards (`workspace-<slug>`,
- * registered on first open) — plus the sidebar brand slots, the usage
- * sidebar entry, the landing selection, and the stylesheet.
+ * (`dashboard`: needs-you rows for pending questions, running workspaces as
+ * full-width rows with live status tails and inline answers, the remaining
+ * workspaces as one compact card grid, and the year heatmap), the usage
+ * statistics page (`usage-stats`), and per-workspace sub-dashboards
+ * (`workspace-<slug>`, registered on first open) — plus the sidebar brand
+ * slots, the usage sidebar entry, the landing selection, and the stylesheet.
  * @module dashboard/client
  */
 
@@ -14,6 +15,7 @@ import { DASHBOARD_CSS } from './dashboard-css.ts'
 import { DashboardPage, UsagePage, type DashboardFace, type QuestionRemoteFace, type SessionRemoteFace, type SessionsFace } from './DashboardPage.tsx'
 import { WorkspacePage } from './WorkspacePage.tsx'
 import type { DashboardOverviewView } from '../core/view.ts'
+import type { DashboardSummariesBody } from '../core/summary.ts'
 import type { WorkspacesFace, WorkspaceTarget } from './workspace.ts'
 
 /** Required services: the slot registry, the layout panel store, live sessions. */
@@ -108,6 +110,27 @@ async function fetchOverview(): Promise<DashboardOverviewView | undefined> {
   }
 }
 
+/** Type guard for the summaries response body (`ok` flag + `summaries` rows). */
+function isSummariesBody(body: unknown): body is DashboardSummariesBody {
+  if (typeof body !== 'object' || body === null || !('ok' in body) || !('summaries' in body)) return false
+  return Array.isArray(body.summaries)
+}
+
+/** Same-origin read of the host per-session summaries report; undefined on any failure. */
+async function fetchSummaries(ids: readonly string[]): Promise<DashboardSummariesBody | undefined> {
+  if (ids.length === 0) return undefined
+  try {
+    const response = await fetch(`/api/dashboard/summaries?ids=${encodeURIComponent(ids.join(','))}`, {
+      headers: { accept: 'application/json' },
+    })
+    const body: unknown = await response.json()
+    if (response.ok && isSummariesBody(body) && body.ok) return body
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Client plugin body: register both panels, the brand slots, the usage
  * sidebar entry, the landing selection, and the stylesheet.
@@ -161,6 +184,7 @@ export function apply(ctx: DashboardContext): void {
     // uiWorkspace loads after this plugin applies; resolve at click time.
     openSession: (sessionId) => { tryGet<{ openSession(target: string): void }>(ctx, 'uiWorkspace')?.openSession(sessionId) },
     fetchOverview,
+    fetchSummaries,
     version: bootRelease()?.version,
   }
 

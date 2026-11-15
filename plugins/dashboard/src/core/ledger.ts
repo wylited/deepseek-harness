@@ -1,7 +1,9 @@
 /**
  * The dashboard usage ledger: a pure fold from session usage facts into a
  * per-day, per-session, per-model totals document, plus its JSON
- * (de)serialization and retention pruning.
+ * (de)serialization and retention pruning. The same document carries the
+ * per-session idle status summaries (`summaries`, see core/summary): the
+ * cache the summaries route serves and regenerates from.
  *
  * Forked from @linxin666/dsh-usage (packages `core/ledger.ts`, v0.4.16),
  * Apache License 2.0 — Copyright (c) 2025 linxin666 and contributors — with
@@ -11,6 +13,8 @@
  * day-key helpers are the upstream implementation.
  * @module dashboard/core/ledger
  */
+
+import { reviveSummaryEntries, type SessionSummaryEntry } from './summary.ts'
 
 /** One per-session day bucket: what that session consumed that local day. */
 export interface SessionDayTotals {
@@ -40,11 +44,13 @@ export interface SessionDayTotals {
 export interface UsageLedgerDocument {
   version: 1
   days: Record<string, Record<string, SessionDayTotals>>
+  /** Idle status summaries per session id (the card cache); absent pre-v1 files. */
+  summaries: Record<string, SessionSummaryEntry>
 }
 
 /** An empty ledger document. */
 export function createLedgerDocument(): UsageLedgerDocument {
-  return { version: 1, days: {} }
+  return { version: 1, days: {}, summaries: {} }
 }
 
 /** Local-date key (`YYYY-MM-DD`) for an epoch ms timestamp. */
@@ -179,17 +185,32 @@ export function deserializeLedger(value: unknown): UsageLedgerDocument {
   const doc = createLedgerDocument()
   if (typeof value !== 'object' || value === null) return doc
   const days = (value as Record<string, unknown>).days
-  if (typeof days !== 'object' || days === null) return doc
-  for (const [dateKey, sessions] of Object.entries(days as Record<string, unknown>)) {
-    if (!isLedgerDateKey(dateKey) || typeof sessions !== 'object' || sessions === null) continue
-    const atMs = new Date(dateKey + 'T12:00:00').getTime()
-    for (const [sessionId, entry] of Object.entries(sessions as Record<string, unknown>)) {
-      if (typeof entry !== 'object' || entry === null) continue
-      const provider = typeof entry.provider === 'string' ? entry.provider : ''
-      const model = typeof entry.model === 'string' ? entry.model : ''
-      const revived = reviveTotals(entry, provider, model, atMs)
-      if (revived !== undefined) foldSessionUsage(doc, atMs, sessionId, provider, model, revived)
+  if (typeof days === 'object' && days !== null) {
+    for (const [dateKey, sessions] of Object.entries(days as Record<string, unknown>)) {
+      if (!isLedgerDateKey(dateKey) || typeof sessions !== 'object' || sessions === null) continue
+      const atMs = new Date(dateKey + 'T12:00:00').getTime()
+      for (const [sessionId, entry] of Object.entries(sessions as Record<string, unknown>)) {
+        if (typeof entry !== 'object' || entry === null) continue
+        const provider = typeof entry.provider === 'string' ? entry.provider : ''
+        const model = typeof entry.model === 'string' ? entry.model : ''
+        const revived = reviveTotals(entry, provider, model, atMs)
+        if (revived !== undefined) foldSessionUsage(doc, atMs, sessionId, provider, model, revived)
+      }
     }
   }
+  doc.summaries = reviveSummaryEntries((value as Record<string, unknown>).summaries)
   return doc
+}
+
+/**
+ * The session's latest usage fold time across all days (epoch ms), 0 when
+ * the ledger never saw it. Staleness compare for cold idle summaries.
+ */
+export function lastFoldAtOf(doc: Readonly<UsageLedgerDocument>, sessionId: string): number {
+  let lastAt = 0
+  for (const key of ledgerDayKeys(doc)) {
+    const bucket = doc.days[key]?.[sessionId]
+    if (bucket !== undefined && bucket.lastAt > lastAt) lastAt = bucket.lastAt
+  }
+  return lastAt
 }

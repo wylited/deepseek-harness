@@ -150,18 +150,6 @@ span.wd-group-name { cursor: default; }
   font-variant-numeric: tabular-nums;
 }
 .wd-group-count[data-running] { color: var(--dsw-alias-brand-primary, #ff9940); }
-.wd-group-more {
-  border: 0;
-  background: none;
-  padding: 6px 10px;
-  font: inherit;
-  font-size: 11px;
-  color: var(--dsw-alias-label-tertiary, #8a9199);
-  cursor: pointer;
-}
-@media (hover: hover) {
-  .wd-group-more:hover { color: var(--dsw-alias-brand-primary, #ff9940); }
-}
 .wd-group-kids {
   margin: 2px 0 6px 9px;
   padding-left: 12px;
@@ -204,6 +192,28 @@ button.wd-row { font: inherit; color: inherit; }
   text-overflow: ellipsis;
 }
 .wd-row-status[data-degraded] { color: var(--dsw-alias-label-tertiary, #8a9199); }
+
+/* Needs you: the section of agents holding an open ask-user question. The
+ * accent is the brand token (the same one the pending-question chip and the
+ * running dot use), so restyle palettes re-theme it for free. */
+.wd-needs-section { border-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #ff9940) 45%, var(--dsw-alias-border-l2, #e5e7e8)); }
+.wd-needs-section .wd-section-title { color: var(--dsw-alias-brand-primary, #ff9940); }
+.wd-needitem {
+  border-left: 3px solid var(--dsw-alias-brand-primary, #ff9940);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #ff9940) 6%, transparent);
+}
+.wd-dot[data-needs] {
+  border-color: var(--dsw-alias-brand-primary, #ff9940);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary, #ff9940) 45%, transparent);
+}
+.wd-need-q {
+  padding: 2px 10px 8px 38px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12.5px;
+  color: var(--dsw-alias-brand-primary, #ff9940);
+}
 .wd-answer { display: flex; align-items: center; gap: 8px; padding: 0 10px 10px 38px; }
 .wd-answer-q {
   flex: none;
@@ -277,6 +287,60 @@ button.wd-row { font: inherit; color: inherit; }
   color: var(--dsw-alias-label-tertiary, #8a9199);
   font-variant-numeric: tabular-nums;
 }
+
+/* The landing's compact workspace grid: one row of small cards (running
+ * overflow plus every resting workspace), scrolling inside a bounded strip
+ * like the tables and the heatmap. */
+.wd-grid-scroll { overflow-x: auto; overscroll-behavior-x: contain; }
+.wd-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(180px, 240px);
+  gap: 10px;
+  width: max-content;
+}
+.wd-gridcard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2, #e5e7e8);
+  border-radius: 0;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.wd-gridcard[data-needs] {
+  border-color: color-mix(in srgb, var(--dsw-alias-brand-primary, #ff9940) 45%, var(--dsw-alias-border-l2, #e5e7e8));
+}
+@media (hover: hover) {
+  .wd-gridcard:hover { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+}
+.wd-gridcard-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.wd-gridcard-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+}
+.wd-gridcard-status {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dsw-alias-label-secondary, #787b80);
+}
+.wd-gridcard-status[data-degraded] { color: var(--dsw-alias-label-tertiary, #8a9199); }
+.wd-gridcard-count { font-size: 10.5px; color: var(--dsw-alias-label-tertiary, #8a9199); font-variant-numeric: tabular-nums; }
 
 /* Headline cards. */
 .wd-cards {
@@ -406,15 +470,26 @@ button.wd-row { font: inherit; color: inherit; }
    * copy hit area to 44px. */
   .wd-version { position: relative; }
   .wd-version::after { content: ''; position: absolute; inset: -12px -8px; }
-  .wd-group-more { padding: 14px 10px; }
   .wd-row { padding: 14px 10px; }
   .wd-answer-input { padding: 13px 12px; font-size: 13px; }
   .wd-answer-send { padding: 13px 16px; font-size: 13px; }
+
+  /* Grid cards grow into real touch targets and readable text; the strip
+   * shows about two cards and lets the next peek (the upstream strip signal).
+   * The question line of a needs-you row is primary copy on a phone. */
+  .wd-gridcard { min-height: 44px; padding: 12px; }
+  /* Percent columns need a definite base: drop max-content so the 46% cap
+   * sizes against the strip (about two cards plus a peek). */
+  .wd-grid { grid-auto-columns: minmax(150px, 46%); width: auto; }
+  .wd-gridcard-status { font-size: 13px; }
+  .wd-gridcard-count { font-size: 13px; }
+  .wd-need-q { font-size: 13px; }
 
   /* Dense strips scroll in place with a faint right-edge scrim as the
    * affordance (upstream signals strips by letting the next cell peek;
    * the heatmap's uniform grid instead gets a soft fade). */
   .wd-heat-scroll,
+  .wd-grid-scroll,
   .wd-tablewrap {
     box-shadow: inset -14px 0 10px -12px color-mix(in srgb, var(--dsw-alias-label-tertiary, #8a9199) 40%, transparent);
   }

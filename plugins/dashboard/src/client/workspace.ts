@@ -95,9 +95,9 @@ export interface AgentRow {
   workspaceLabel: string | undefined
 }
 
-/** How many rows the landing feed shows at most: every running agent
- *  always shows, recent idle agents pad the rest of the budget. */
-export const FEED_ROW_CAP = 5
+/** How many running workspace rows the landing feed shows at most: the most
+ *  recently active ones; the rest fold into the compact grid below. */
+export const RUNNING_ROW_CAP = 5
 
 /** Workspace basenames that read as noise on a personal page: this repo's
  *  checkout dir. The parent directory names the checkout more usefully. */
@@ -190,24 +190,17 @@ export interface WorkspaceGroupNode {
   slug: string
   /** Sessions assigned directly to this workspace, newest first. */
   rows: readonly AgentRow[]
-  /** Rows the feed cap hid here (they live on the workspace's own panel). */
-  hidden: number
   children: readonly WorkspaceGroupNode[]
   /** Newest activity anywhere in this subtree (ordering key). */
   activity: number
 }
 
-/** The grouped feed: root groups plus the uncapped per-path running counts. */
+/** The grouped feed: the full workspace tree, most recently active first. */
 export interface WorkspaceGroups {
   roots: readonly WorkspaceGroupNode[]
-  /** True running count per workspace path, from the rows the builder saw. */
-  runningByPath: ReadonlyMap<string | undefined, number>
 }
 
 export interface BuildGroupsOptions {
-  /** Show at most this many rows overall: every running row always shows,
-   *  the newest non-running rows pad the rest of the budget; undefined = all. */
-  cap?: number
   /** Also include workspaces nested under this path as (possibly empty)
    *  structural nodes, so a panel can list its idle child workspaces. */
   childOf?: string
@@ -260,11 +253,9 @@ export function buildWorkspaceGroups(
   items: readonly WorkspaceItemView[] | undefined = undefined,
   options: BuildGroupsOptions = {},
 ): WorkspaceGroups {
-  const runningByPath = new Map<string | undefined, number>()
   const assigned = new Map<string | undefined, AgentRow[]>()
   const rowPaths = new Set<string>()
   for (const row of rows) {
-    runningByPath.set(row.workspacePath, (runningByPath.get(row.workspacePath) ?? 0) + (row.running ? 1 : 0))
     const bucket = assigned.get(row.workspacePath) ?? []
     bucket.push(row)
     assigned.set(row.workspacePath, bucket)
@@ -294,13 +285,13 @@ export function buildWorkspaceGroups(
     let slug = workspaceSlug(label)
     for (let attempt = 2; usedSlugs.has(slug); attempt += 1) slug = `${workspaceSlug(label)}-${attempt}`
     usedSlugs.add(slug)
-    byPath.set(path, { path, label, slug, rows: [], hidden: 0, children: [], activity: 0 })
+    byPath.set(path, { path, label, slug, rows: [], children: [], activity: 0 })
   }
   const unassigned: WorkspaceGroupNode[] = []
   if (assigned.has(undefined)) {
     unassigned.push({
       path: undefined, label: 'No workspace', slug: 'none',
-      rows: [], hidden: 0, children: [], activity: 0,
+      rows: [], children: [], activity: 0,
     })
   }
 
@@ -317,27 +308,9 @@ export function buildWorkspaceGroups(
   }
 
   const nodes = [...unassigned, ...byPath.values()]
-  let shownIds: Set<string> | undefined
-  if (options.cap !== undefined) {
-    shownIds = new Set()
-    const ordered = [...rows].sort((a, b) => b.updatedAt - a.updatedAt)
-    let budget = options.cap
-    for (const row of ordered) {
-      if (!row.running) continue
-      shownIds.add(row.sessionId)
-      budget -= 1
-    }
-    for (const row of ordered) {
-      if (row.running || budget <= 0) continue
-      shownIds.add(row.sessionId)
-      budget -= 1
-    }
-  }
   for (const [path, bucket] of assigned) {
     const node = path === undefined ? unassigned[0]! : byPath.get(normalized(path))!
-    const shown = shownIds === undefined ? [...bucket] : bucket.filter(row => shownIds.has(row.sessionId))
-    node.rows = shown.sort((a, b) => b.updatedAt - a.updatedAt)
-    node.hidden = bucket.length - node.rows.length
+    node.rows = [...bucket].sort((a, b) => b.updatedAt - a.updatedAt)
   }
   const activityOf = (node: WorkspaceGroupNode): number =>
     Math.max(node.rows[0]?.updatedAt ?? 0, ...node.children.map(activityOf))
@@ -353,7 +326,7 @@ export function buildWorkspaceGroups(
     .filter(node => node.path === undefined || parentOf.get(node.path) === undefined)
     .map(link)
     .sort((a, b) => b.activity - a.activity)
-  return { roots, runningByPath }
+  return { roots }
 }
 
 // --- optional store hook ----------------------------------------------------

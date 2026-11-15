@@ -46,3 +46,33 @@ export function makeDashboardOverviewRoute(ctx: Context, service: DashboardServi
     },
   }
 }
+
+/** At most this many session ids one summaries request may name. */
+const SUMMARIES_ID_CAP = 40
+
+/**
+ * Summaries route: `GET /api/dashboard/summaries?ids=<session ids>` answers
+ * each session's dashboard facts — host running state, open user question,
+ * cached idle summary, staleness. Stale idle sessions regenerate in the
+ * background; the answer is always the immediate cache read. Behind the
+ * same loopback fence as the overview.
+ */
+export function makeDashboardSummariesRoute(ctx: Context, service: DashboardService): WebRoute {
+  return {
+    kind: 'exact',
+    path: DASHBOARD_API_PREFIX + '/summaries',
+    handler: (req: IncomingMessage, res: ServerResponse): void => {
+      const trustedHosts = ctx.get('webStartup')?.trustedHosts ?? []
+      if (!isDashboardRequestAllowed(req, trustedHosts)) {
+        writeJson(res, 403, { ok: false, error: 'forbidden: loopback-only' })
+        return
+      }
+      const ids = new URL(req.url ?? '/', 'http://localhost').searchParams.get('ids')
+        ?.split(',')
+        .filter(id => id !== '')
+        .slice(0, SUMMARIES_ID_CAP)
+        ?? []
+      writeJson(res, 200, { ok: true, summaries: service.pollSummaries(ids) }, { 'cache-control': 'no-store' })
+    },
+  }
+}

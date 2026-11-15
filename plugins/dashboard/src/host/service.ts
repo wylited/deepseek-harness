@@ -19,8 +19,10 @@ import { isAbsolute, join, dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { TokenUsage } from '@deepseek-ai/dsh-llm'
-import { createLedgerDocument, deserializeLedger, foldSessionUsage, localDateKey, pruneLedger, type SessionDayTotals, type UsageLedgerDocument } from '../core/ledger.ts'
+import { createLedgerDocument, deserializeLedger, foldSessionUsage, lastFoldAtOf, localDateKey, pruneLedger, type SessionDayTotals, type UsageLedgerDocument } from '../core/ledger.ts'
 import { buildOverview, HEATMAP_DAYS, type DashboardOverviewView } from '../core/view.ts'
+import { pruneSummaryEntries, SUMMARY_ENTRY_CAP, type DashboardSummaryReport } from '../core/summary.ts'
+import { SummaryEngine } from './summaries.ts'
 
 /** Ledger flush debounce. */
 const FLUSH_DEBOUNCE_MS = 3_000
@@ -119,6 +121,8 @@ export class DashboardService {
   private readonly ledger: UsageLedgerDocument = createLedgerDocument()
   /** Per-live-session route attribution (WeakMap: disposed sessions age out). */
   private readonly sessionRoutes = new WeakMap<Session, SessionRoute>()
+  /** Idle-summary engine; shares the ledger's summary map and flush. */
+  readonly summaries: SummaryEngine
   private sessionListenerDisposer: (() => void) | undefined
   private flushTimer: ReturnType<typeof setTimeout> | undefined
   private flushInFlight: Promise<void> = Promise.resolve()
@@ -127,6 +131,7 @@ export class DashboardService {
   constructor(ctx: Context, dshHomeDir: string) {
     this.ctx = ctx
     this.ledgerPath = join(dshHomeDir, 'dashboard', 'ledger.json')
+    this.summaries = new SummaryEngine(ctx, session => this.sessionRoutes.get(session))
   }
 
   /** Start the session/event subscription and load the persisted ledger. */
@@ -139,6 +144,7 @@ export class DashboardService {
   /** Detach, then flush whatever the last folds left behind. */
   stop(): Promise<void> {
     this.disposed = true
+    this.summaries.dispose()
     try {
       this.sessionListenerDisposer?.()
     } catch {
@@ -152,6 +158,23 @@ export class DashboardService {
   /** The overview document for the dashboard route. */
   overview(): DashboardOverviewView {
     return buildOverview(this.ledger, Date.now())
+  }
+
+  /**
+   * Per-session dashboard facts (running, open question, cached idle
+   * summary, staleness). Stale idle summaries regenerate in the background;
+   * this never waits on a model call.
+   */
+  pollSummaries(sessionIds: readonly string[]): DashboardSummaryReport[] {
+    return this.summaries.poll(sessionIds, {
+      entries: () => this.ledger.summaries,
+      put: (sessionId, entry) => {
+        this.ledger.summaries[sessionId] = entry
+        pruneSummaryEntries(this.ledger.summaries, SUMMARY_ENTRY_CAP)
+        this.scheduleFlush()
+      },
+      lastFoldAt: sessionId => lastFoldAtOf(this.ledger, sessionId),
+    })
   }
 
   // ------------------------------------------------------------------
