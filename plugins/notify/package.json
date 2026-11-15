@@ -1,0 +1,27 @@
+{
+  "name": "notify",
+  "description": "Attention router: in-page toasts when a session asks a question or finishes with a final message, suppressed while that session is on screen, plus a 45s-delayed rich Discord webhook ping (credential-seam secret) when no client is connected.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.0",
+    "node": ">=24.9.0"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "license": "MIT"
+}

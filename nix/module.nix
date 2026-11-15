@@ -167,6 +167,7 @@ let
         "@letter2025/dsh-search-mcp" = "^0.3.4";
         dashboard = "link:${src}/plugins/dashboard";
         keys = "link:${src}/plugins/keys";
+        notify = "link:${src}/plugins/notify";
         perplexity-web = "link:${src}/plugins/perplexity-web";
         restyle = "link:${src}/plugins/restyle";
       };
@@ -336,6 +337,11 @@ let
     - insert:
         - id: keys
           name: keys
+    - insert:
+        - id: notify
+          name: notify
+          config:
+            credential: DISCORD_NOTIFY
 
     # Sure (sure.ts.wyli.tech) — personal finance MCP over streamable-http.
     # Same tool registry as Sure's builtin assistant (get/update transactions,
@@ -545,7 +551,7 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
       # The profile's link: plugins ship lib/ as a gitignored build output —
       # a fresh clone has none, and the web profile fails their import
       # (ERR_MODULE_NOT_FOUND) at boot without it.
-      for p in dashboard keys restyle; do
+      for p in dashboard keys notify restyle; do
         DSH_TELEMETRY_DISABLED=1 ${nodeDir}/bin/node "$src/plugins/$p/build.mjs"
       done
       perplexity=$src/plugins/perplexity-web
