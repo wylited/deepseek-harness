@@ -337,6 +337,23 @@ let
         - id: keys
           name: keys
 
+    # Sure (sure.ts.wyli.tech) — personal finance MCP over streamable-http.
+    # Same tool registry as Sure's builtin assistant (get/update transactions,
+    # rules, budgets, transfers…). The bearer token rides the credential seam
+    # (''${credential:sure_mcp} → refs: sure_mcp in $DSH_HOME/.credentials.yaml)
+    # — never inline: this repo is public and nix store profile files are
+    # world-readable. Row replaces the base mcp-manager row, so inject is
+    # restated (patch rows REPLACE the complete config value).
+    - id: mcp-manager
+      inject: [ credentials ]
+      config:
+        servers:
+          sure:
+            transport: streamable-http
+            url: https://sure.ts.wyli.tech/mcp
+            headers:
+              Authorization: Bearer ''${credential:sure_mcp}
+
     # Tokenless admission on the trusted tailnet: any request passing the
     # Host/Origin fence (loopback, the listener's bind IP, or this list) is
     # admitted without the browser cookie; an untrusted Host still gets 403.
