@@ -548,7 +548,18 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
         export DSH_CLIENT_GIT_DIRTY=false
         export DSH_TELEMETRY_DISABLED=1
         export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_HOME=${corepackHome}
-        ${nodeDir}/bin/corepack pnpm install --frozen-lockfile &&
+        # The profile lockfile is runtime state seeded once; when the dependency
+        # set changes (new plugin link), a frozen install aborts with
+        # ERR_PNPM_OUTDATED_LOCKFILE. Refresh the lock only when package.json
+        # actually moved, keeping the frozen (supply-chain-checked) fast path.
+        deps_hash=$(${pkgs.coreutils}/bin/cat "$src"/plugins/*/package.json | ${pkgs.coreutils}/bin/sha256sum | ${pkgs.coreutils}/bin/cut -d" " -f1)
+        deps_stamp="$profileDir/.deps-hash"
+        install_args="--frozen-lockfile"
+        if [ "$(${pkgs.coreutils}/bin/cat "$deps_stamp" 2>/dev/null || true)" != "$deps_hash" ]; then
+          install_args="--no-frozen-lockfile"
+          printf "%s" "$deps_hash" > "$deps_stamp"
+        fi
+        ${nodeDir}/bin/corepack pnpm install "$install_args" &&
           ${nodeDir}/bin/corepack pnpm run build
       )
       # The profile's link: plugins ship lib/ as a gitignored build output —
