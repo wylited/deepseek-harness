@@ -455,6 +455,9 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
   # ACTIVE slot's tree is only read here (marker check), never written.
   provisionScript = pkgs.writeShellScript "dsh-provision" ''
     set -euo pipefail
+    # pnpm purges node_modules without prompting when the dependency graph
+    # changes (new plugin link); without a TTY it aborts and fails the slot.
+    export CI=true
     slot="''${1:-}"
     if [ "$slot" != "a" ] && [ "$slot" != "b" ]; then
       echo "dsh-provision: slot argument required (a|b), got '$slot'" >&2
