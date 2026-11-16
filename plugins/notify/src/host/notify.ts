@@ -90,6 +90,7 @@ export class NotifyService {
   /** Whether the attention route is mounted (webServer present). */
   private attentionGateEnabled = false
   private flushTimer: ReturnType<typeof setTimeout> | undefined
+  private firstEventSeen = false
   private credentialAbsentLogged = false
 
   constructor(options: NotifyOptions, services: NotifyServices) {
@@ -147,6 +148,10 @@ export class NotifyService {
       return () => {}
     }
     const stopEvents = register('session/event', (session, event) => {
+      if (!this.firstEventSeen) {
+        this.firstEventSeen = true
+        this.services.logger.warn(`notify: feed alive — first session/event "${String(event.type)}" for ${session.id}`)
+      }
       try {
         this.onEvent(session, event)
       } catch (error: unknown) {
@@ -157,6 +162,7 @@ export class NotifyService {
       this.pending.delete(session.id)
       this.scratch.delete(session.id)
     }, { global: true })
+    this.services.logger.warn('notify: feed listeners armed (global session/event + session/disposed)')
     return () => {
       stopEvents()
       stopDisposed()
