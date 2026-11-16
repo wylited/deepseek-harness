@@ -330,12 +330,15 @@ export function PendingSubmissionBubble({ submission, loadImage, renderFactorySl
  * bubble without asking for it.
  */
 export const UserMessageNodeView = memo(function UserMessageNodeView({
-  node, renderFactorySlot, loadImage, renderSlotChain, t,
+  node, renderFactorySlot, loadImage, renderSlotChain, editMessage, t,
 }: ChatNodeViewProps<'user' | 'steering'> & {
   /** Bound by the `user` keyed registration, the only entry that declares the seat. */
   renderSlotChain: PropsRenderSlots<'conversation.chat.user.before'>['renderSlotChain']
 }) {
   const data = node.data
+  // A durable user message with an event before it can fork its turn away;
+  // synthetic projections and the session's very first event cannot.
+  const editable = node.kind === 'user' && data.messageId !== undefined && data.seq >= 1
   return (
     <UserStyleBubble
       node={node}
@@ -353,6 +356,7 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
           time={data.time}
           clock="start"
           className={css.actions}
+          {...editable && editMessage !== undefined ? { onEdit: () => { editMessage(data.seq, text) } } : {}}
           t={t}
         />
       )}

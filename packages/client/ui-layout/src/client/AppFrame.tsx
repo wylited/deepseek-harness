@@ -15,7 +15,7 @@
  * shares — zero cordis or framework imports, zero self-made hooks.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactNode, TouchEvent } from 'react'
 import type {
   HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
@@ -23,6 +23,13 @@ import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBA
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
+
+/** Screen-edge start zone that arms a drawer swipe (touch only). */
+const SWIPE_EDGE_ZONE = 24
+/** Travel past which an armed horizontal swipe commits to open/close. */
+const SWIPE_COMMIT = 60
+/** Movement past which the gesture's dominant axis is decided. */
+const SWIPE_DECIDE = 8
 
 /** Browser posture supplied by the root registration. */
 export interface AppFrameInjected {
@@ -258,6 +265,57 @@ export function AppFrame({
   const onRightbarDrag = useCallback((dx: number) => {
     actions.setRightbar(rightbarBase.current - dx)
   }, [actions])
+
+  // Touch edge-swipe drawer gestures, armed only for coarse pointers in
+  // drawer mode. Gestures arm from a ~24px screen-edge start so the
+  // conversation's own horizontal scrolls and carousels are untouched, and
+  // commit only on a horizontal-dominant swipe past the threshold. Handlers
+  // stay passive: no preventDefault, touch-action untouched.
+  const coarsePointer = useMemo(() => window.matchMedia('(pointer: coarse)').matches, [])
+  const swipeArmed = drawer && coarsePointer
+  const swipe = useRef<{ edge: 'left' | 'right'; x: number; y: number } | null>(null)
+  const onFrameTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    swipe.current = null
+    if (!swipeArmed || event.touches.length !== 1) return
+    const touch = event.touches[0]
+    if (touch === undefined) return
+    const width = frameRef.current?.clientWidth ?? 0
+    if (touch.clientX <= SWIPE_EDGE_ZONE) swipe.current = { edge: 'left', x: touch.clientX, y: touch.clientY }
+    else if (width > 0 && touch.clientX >= width - SWIPE_EDGE_ZONE) {
+      swipe.current = { edge: 'right', x: touch.clientX, y: touch.clientY }
+    }
+  }, [swipeArmed])
+  const onFrameTouchMove = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const armed = swipe.current
+    if (!armed) return
+    const touch0 = event.touches[0]
+    if (touch0 === undefined) { swipe.current = null; return }
+    const dx = touch0.clientX - armed.x
+    const dy = touch0.clientY - armed.y
+    // Vertical-dominant movement disarms: the gesture belongs to scrolling.
+    if ((Math.abs(dx) > SWIPE_DECIDE || Math.abs(dy) > SWIPE_DECIDE) && Math.abs(dx) <= Math.abs(dy)) {
+      swipe.current = null
+    }
+  }, [])
+  const onFrameTouchEnd = useCallback((event: TouchEvent<HTMLDivElement>) => {
+    const armed = swipe.current
+    swipe.current = null
+    if (!armed) return
+    const ended = event.changedTouches[0]
+    if (ended === undefined) return
+    const dx = ended.clientX - armed.x
+    if (Math.abs(dx) < SWIPE_COMMIT) return
+    if (armed.edge === 'left') {
+      // Swiping right from the left edge opens the drawer; the opposite
+      // direction over an open drawer closes it (toggleSidebar flips
+      // narrowExpanded below the auto-collapse width).
+      if ((dx > 0 && sidebarCollapsed) || (dx < 0 && drawerOpen)) actions.toggleSidebar()
+    } else if (dx < 0 && !layoutInfo.rightbarShown) {
+      actions.openRightbar(false, false)
+    } else if (dx > 0 && layoutInfo.rightbarShown) {
+      actions.closeRightbar()
+    }
+  }, [actions, sidebarCollapsed, drawerOpen, layoutInfo.rightbarShown])
   const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
   // The rendered template lets the grid solve the squeeze natively: the centre
   // declares its protected minimum and the right column bids up to the clamped
@@ -288,10 +346,9 @@ export function AppFrame({
   return (
     <div
       ref={frameRef}
+      {...(swipeArmed ? { onTouchStart: onFrameTouchStart, onTouchMove: onFrameTouchMove, onTouchEnd: onFrameTouchEnd } : {})}
       className={css.frame}
       style={{
-        ...(windowsTitlebar
-          ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
         gridTemplateColumns:
           `${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightbarMax}px)`,
       }}

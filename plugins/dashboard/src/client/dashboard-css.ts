@@ -250,6 +250,38 @@ button.wd-row { font: inherit; color: inherit; }
   .wd-answer-send:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
 }
 .wd-answer-send:disabled { opacity: 0.45; cursor: default; }
+/* The pinned inbox quick input: a textarea plus send button. Enter sends on
+ * fine pointers; coarse pointers newline and the button submits (see the
+ * component). */
+.wd-inbox { display: flex; align-items: stretch; gap: 8px; }
+.wd-inbox-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, #e5e7e8);
+  border-radius: 0;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  resize: vertical;
+}
+.wd-inbox-input:focus { outline: none; border-color: var(--dsw-alias-brand-primary, #ff9940); }
+.wd-inbox-send {
+  flex: none;
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid var(--dsw-alias-border-l2, #e5e7e8);
+  border-radius: 0;
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  font-size: 12px;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .wd-inbox-send:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2, #f3f4f5); }
+}
+.wd-inbox-send:disabled { opacity: 0.45; cursor: default; }
 .wd-dot {
   flex: none;
   width: 8px;
@@ -475,14 +507,14 @@ button.wd-row { font: inherit; color: inherit; }
   .wd-row { padding: 14px 10px; }
   .wd-answer-input { padding: 13px 12px; font-size: 13px; }
   .wd-answer-send { padding: 13px 16px; font-size: 13px; }
+  .wd-inbox-input { min-height: 44px; padding: 12px; font-size: 13px; }
+  .wd-inbox-send { min-height: 44px; padding: 12px 16px; font-size: 13px; }
 
-  /* Grid cards grow into real touch targets and readable text; the strip
-   * shows about two cards and lets the next peek (the upstream strip signal).
+  /* Grid cards grow into real touch targets and readable text; workspaces
+   * stack into a single full-width column (no sideways strip on a phone).
    * The question line of a needs-you row is primary copy on a phone. */
   .wd-gridcard { min-height: 44px; padding: 12px; }
-  /* Percent columns need a definite base: drop max-content so the 46% cap
-   * sizes against the strip (about two cards plus a peek). */
-  .wd-grid { grid-auto-columns: minmax(150px, 46%); width: auto; }
+  .wd-grid { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: 1fr; width: auto; }
   .wd-gridcard-status { font-size: 13px; }
   .wd-gridcard-count { font-size: 13px; }
   .wd-need-q { font-size: 13px; }
@@ -505,5 +537,11 @@ button.wd-row { font: inherit; color: inherit; }
 @media (max-width: 430px) {
   .wd-row .wd-badge { display: none; }
   .wd-version { display: none; }
+}
+
+/* Touch keyboards: the inbox textarea keeps the 16px floor so iOS Safari
+ * does not zoom on focus; fine pointers keep the compact size above. */
+@media (pointer: coarse) {
+  .wd-inbox-input { font-size: 16px; }
 }
 `

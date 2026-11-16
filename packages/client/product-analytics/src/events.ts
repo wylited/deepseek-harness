@@ -37,7 +37,7 @@ export interface ProductEventMap {
     session_id: SessionId
     parent_session_id: SessionId
     parent_message_id?: MessageId
-    click_position: 'footer' | 'sidebar'
+    click_position: 'footer' | 'sidebar' | 'edit' | 'regenerate'
   }
   sidebar_menu_click: { menu_name: SidebarAnalyticsEntry; position?: SidebarAnalyticsPosition }
   more_menu_item_click: { region: EntryAnalyticsRegion; action: 'browse_plugins' | 'create_plugin' }

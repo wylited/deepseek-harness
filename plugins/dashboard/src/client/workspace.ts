@@ -24,6 +24,9 @@ export interface SessionsFace {
     getSnapshot(): SessionsListState
   }
   refreshProjections(sessionId: string): Promise<void>
+  /** Create (or blank-reuse) a Session on the Host; `cwd` names a workspace
+   * directory when no workspaceId is known (ISessions.create). */
+  create(opts?: { workspaceId?: string; cwd?: string; sessionId?: string; agentPreset?: string }): Promise<string>
 }
 
 /** The list snapshot fields the feed reads. */

@@ -29,7 +29,7 @@ import type { DashboardSummariesBody, DashboardSummaryReport } from '../core/sum
 import {
   RECENT_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey, workspaceSlug,
   type AgentRow, type SessionsFace, type SessionsListState, type WorkspacesFace,
-  type WorkspaceGroupNode, type WorkspaceTarget,
+  type WorkspaceGroupNode, type WorkspaceItemView, type WorkspaceTarget,
 } from './workspace.ts'
 
 export type { AgentRow, SessionsFace }
@@ -640,7 +640,83 @@ function subtreeRunningCount(node: WorkspaceGroupNode): number {
     + node.children.reduce((sum, child) => sum + subtreeRunningCount(child), 0)
 }
 
-/** The landing panel: needs-you rows, running workspace rows, then the grid. */
+/** The inbox workspace: quick prompts land in a session under this path. */
+const INBOX_WORKSPACE_PATH = '/var/lib/dsh/home/inbox'
+
+/**
+ * The pinned inbox quick input: submitting queues one prompt into the inbox
+ * workspace's newest session, creating a session there on first use. Enter
+ * sends on fine pointers; on coarse pointers plain Enter newlines and the
+ * send button (or Ctrl/Cmd+Enter) submits — the composer rule, decided per
+ * keypress. Renders nothing without the remote prompt facade.
+ */
+function InboxQuickInput({ face, rows, items }: {
+  face: DashboardFace
+  rows: readonly AgentRow[]
+  items: readonly WorkspaceItemView[]
+}) {
+  const remote = face.sessionRemote
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  if (remote === undefined) return null
+  const submit = (): void => {
+    const text = value.trim()
+    if (text === '' || busy) return
+    setBusy(true)
+    setFailed(false)
+    // Reuse the inbox workspace's default (newest) session; create one on
+    // first use — by workspaceId when the registry lists it, else by path.
+    const newest = rows
+      .filter(row => row.workspacePath === INBOX_WORKSPACE_PATH)
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+    const item = items.find(candidate => candidate.path === INBOX_WORKSPACE_PATH)
+    void (async () => {
+      try {
+        const sessionId = newest !== undefined
+          ? newest.sessionId
+          : await face.sessions.create(item === undefined ? { cwd: INBOX_WORKSPACE_PATH } : { workspaceId: item.workspaceId })
+        await remote.prompt({
+          requestId: crypto.randomUUID(),
+          sessionId,
+          mode: 'queue',
+          content: [{ type: 'text', text }],
+          clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        })
+        setValue('')
+      } catch {
+        setFailed(true)
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }
+  return (
+    <form className="wd-inbox" onSubmit={event => { event.preventDefault(); submit() }}>
+      <textarea
+        className="wd-inbox-input"
+        rows={2}
+        value={value}
+        placeholder={failed ? 'send failed — try again' : 'note something for the inbox agent…'}
+        onChange={event => { setValue(event.target.value) }}
+        onKeyDown={event => {
+          if (event.key !== 'Enter' || event.shiftKey || event.repeat) return
+          // Touch composers keep plain Enter as a newline; the button (or
+          // Ctrl/Cmd+Enter) sends. Fine pointers send on Enter.
+          if (!event.ctrlKey && !event.metaKey && window.matchMedia('(pointer: coarse)').matches) return
+          event.preventDefault()
+          submit()
+        }}
+      />
+      <button type="submit" className="wd-inbox-send" disabled={busy || value.trim() === ''}>
+        {busy ? '…' : 'send'}
+      </button>
+    </form>
+  )
+}
+
+/** The landing panel: needs-you rows, recent agents, the inbox quick input,
+ * then the workspace grid (most recently used first). */
 export function DashboardPage(face: DashboardFace) {
   const state = useSyncExternalStore(face.sessions.list.subscribe, face.sessions.list.getSnapshot)
   const workspaces = useOptionalStore(face.workspaces?.list)
@@ -688,14 +764,16 @@ export function DashboardPage(face: DashboardFace) {
     () => rows.filter(row => questions.get(row.sessionId) !== undefined).sort((a, b) => b.updatedAt - a.updatedAt),
     [rows, questions],
   )
-  // The 5 most recently active agent sessions lead as full-width rows —
-  // running sessions first (they are the actionable ones), then idle by
-  // recency; the workspaces they belong to, and everything else, fold into
-  // the one compact grid row below.
-  const { recentSessions, gridRoots, runningWorkspaceCount } = useMemo(() => {
-    const recent = [...rows]
-      .sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0) || b.updatedAt - a.updatedAt)
-      .slice(0, RECENT_ROW_CAP)
+  // RECENT AGENTS: every running session leads (at most RECENT_ROW_CAP),
+  // then the most-recent idle rows fill the remainder — 3 when nothing
+  // runs, (5 - a) when one or two run, none once three or more do. The
+  // workspaces those rows cover, and everything else, fold into the grid
+  // below, most recently used first.
+  const { recentSessions, recentActive, recentIdle, gridRoots, runningWorkspaceCount } = useMemo(() => {
+    const active = rows.filter(row => row.running).sort((a, b) => b.updatedAt - a.updatedAt)
+    const inactive = rows.filter(row => !row.running).sort((a, b) => b.updatedAt - a.updatedAt)
+    const idleCount = active.length === 0 ? 3 : active.length <= 2 ? 5 - active.length : 0
+    const recent = [...active.slice(0, RECENT_ROW_CAP), ...inactive.slice(0, idleCount)]
     const recentIds = new Set(recent.map(row => row.sessionId))
     const covered = groups.roots.filter(node => !subtreeRows(node).some(row => recentIds.has(row.sessionId)))
     // Registry workspaces with no grouped node (no sessions at all) still
@@ -713,7 +791,11 @@ export function DashboardPage(face: DashboardFace) {
       }))
     return {
       recentSessions: recent,
-      gridRoots: [...covered, ...synthesized],
+      recentActive: Math.min(active.length, RECENT_ROW_CAP),
+      recentIdle: Math.min(idleCount, inactive.length),
+      // Most recently used first: a node's recency is its subtree's newest
+      // session (workspaces without sessions sit at the end).
+      gridRoots: [...covered, ...synthesized].sort((a, b) => b.activity - a.activity),
       runningWorkspaceCount: groups.roots.filter(node => subtreeRunningCount(node) > 0).length,
     }
   }, [groups, rows, workspaces.items])
@@ -779,7 +861,7 @@ export function DashboardPage(face: DashboardFace) {
           <span className="wd-section-note">
             {rows.length === 0
               ? 'no agents yet · workspaces are in the grid below'
-              : `${recentSessions.length} most recent${runningWorkspaceCount > 0 ? ` · ${runningWorkspaceCount} running` : ''} · a workspace name opens its page`}
+              : `${recentActive} running${recentIdle > 0 ? ` · ${recentIdle} recent idle` : ''}${runningWorkspaceCount > 0 ? ` · ${runningWorkspaceCount} workspaces active` : ''} · a workspace name opens its page`}
           </span>
         </div>
         {state.phase === 'pending'
@@ -806,11 +888,18 @@ export function DashboardPage(face: DashboardFace) {
               </div>
             )}
       </section>
+      <section className="wd-section" aria-label="Inbox quick input">
+        <div className="wd-section-head">
+          <h2 className="wd-section-title">Inbox</h2>
+          <span className="wd-section-note">quick prompts queue into a session in {INBOX_WORKSPACE_PATH}</span>
+        </div>
+        <InboxQuickInput face={face} rows={rows} items={workspaces.items} />
+      </section>
       {state.phase !== 'pending' && rows.length > 0 && gridRoots.length > 0 && (
         <section className="wd-section">
           <div className="wd-section-head">
             <h2 className="wd-section-title">Workspaces</h2>
-            <span className="wd-section-note">{gridRoots.length} resting · scroll for more</span>
+            <span className="wd-section-note">{gridRoots.length} workspaces · most recently used first</span>
           </div>
           <div className="wd-grid-scroll">
             <div className="wd-grid">

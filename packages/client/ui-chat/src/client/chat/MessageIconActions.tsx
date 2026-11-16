@@ -3,7 +3,8 @@
 
 import { useId, type ReactNode } from 'react'
 import {
-  IconBranchOutlineRegular, IconCheckOutlineRegular, IconCopyOutlineRegular, Tooltip, useClipboardCopy,
+  IconCheckOutlineRegular, IconCopyOutlineRegular, IconEditOutlineRegular, IconRefreshOutlineRegular,
+  IconBranchOutlineRegular, Tooltip, useClipboardCopy,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatViewSlotProps } from '../contract/slots.ts'
 import { formatMessageClock } from './message-chrome.ts'
@@ -21,6 +22,10 @@ export interface MessageIconActionsProps {
   onBranch?: (() => void) | undefined
   /** The message is not a completed transcript tail, so branch stays visible but unavailable. */
   branchUnavailable?: boolean | undefined
+  /** Load the message text as an editable fork draft; omission hides the edit action. */
+  onEdit?: (() => void) | undefined
+  /** Fork before this turn's user message and re-send it; omission hides the regenerate action. */
+  onRegenerate?: (() => void) | undefined
   /** Parent layout class composed onto the actions row. */
   className?: string | undefined
   /**
@@ -43,7 +48,7 @@ export interface MessageIconActionsProps {
  * @returns The actions row element.
  */
 export function MessageIconActions({
-  text, time, clock, onBranch, branchUnavailable = false, className,
+  text, time, clock, onBranch, onEdit, onRegenerate, branchUnavailable = false, className,
   extraActions, usageAction, t,
 }: MessageIconActionsProps) {
   const day = useCalendarDay()
@@ -62,6 +67,20 @@ export function MessageIconActions({
           {copied ? <IconCheckOutlineRegular /> : <IconCopyOutlineRegular />}
         </button>
       </Tooltip>
+      {onEdit !== undefined && (
+        <Tooltip label={t('message.edit')} side="bottom">
+          <button type="button" className={css.action} aria-label={t('message.edit')} onClick={onEdit}>
+            <IconEditOutlineRegular />
+          </button>
+        </Tooltip>
+      )}
+      {onRegenerate !== undefined && (
+        <Tooltip label={t('message.regenerate')} side="bottom">
+          <button type="button" className={css.action} aria-label={t('message.regenerate')} onClick={onRegenerate}>
+            <IconRefreshOutlineRegular />
+          </button>
+        </Tooltip>
+      )}
       {extraActions}
       {onBranch !== undefined && (
         <Tooltip label={branchUnavailable ? t('message.branchUnavailable') : t('message.branch')} side="bottom" openOnClick={branchUnavailable}>

@@ -250,6 +250,33 @@ export function apply(ctx: Context): void {
         if (binding === undefined) throw new Error(`ui-chat: unknown session "${sessionId}"`)
         const session = binding.session
         const chat = chatSource(binding)
+        // Shared send choreography for message edit and regenerate: fork at the
+        // boundary before the addressed user message, open the child, and hand
+        // the original text to its composer — as an editable draft for edit,
+        // or submitted unchanged for regenerate. Any failure leaves the source
+        // view unchanged, exactly like forkAt.
+        const forkBeforeUserMessage = async (
+          userSeq: number,
+          text: string,
+          submit: boolean,
+        ): Promise<void> => {
+          const boundary = userSeq - 1
+          if (!Number.isSafeInteger(boundary) || boundary < 0) return
+          let childId: SessionId
+          try {
+            childId = await ctx.sessions.fork({ sessionId, atSeq: boundary, increaseTitle: true, onCreated: (forked) => {
+              ctx.get('productAnalytics')?.track('branch_session_click', { session_id: forked, parent_session_id: sessionId, click_position: submit ? 'regenerate' : 'edit' })
+            } })
+          } catch {
+            return
+          }
+          ctx.uiWorkspace.openSession(childId)
+          const child = ctx.sessions.binding(childId)
+          const input = child?.ctx.get('conversation')?.input
+          if (child === undefined || input === undefined) return
+          if (input.requestDraftInitialization(child, { prompt: text, whenDraftExists: 'replace' }) === 'blocked') return
+          if (submit) input.for(child.ctx).submit()
+        }
         return {
           ...nodeSources(binding),
           fileDrag: ctx.fileDrag.actions,
@@ -308,6 +335,15 @@ export function apply(ctx: Context): void {
               .catch(() => {
                 // Fork or child-title failure leaves the source view unchanged.
               })
+          },
+          // Edit and regenerate fork at the event seq immediately before the
+          // addressed user message, so the child replaces that turn; the fork
+          // seed's synthetic closers settle whatever the cut leaves open.
+          editMessage: (userSeq, text) => {
+            void forkBeforeUserMessage(userSeq, text, false)
+          },
+          regenerateMessage: (userSeq, text) => {
+            void forkBeforeUserMessage(userSeq, text, true)
           },
         }
       },

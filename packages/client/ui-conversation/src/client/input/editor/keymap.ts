@@ -272,6 +272,12 @@ export function registerComposerKeymap(editor: LexicalEditor, handlers: Composer
         event?.preventDefault()
         return true
       }
+      // Touch composers: plain Enter breaks the line (returning false falls
+      // through to the plain-text line-break default); the Send button and
+      // Ctrl/Cmd+Enter (fixed.complementary) are the send gestures. Decided
+      // per keypress so pointer changes apply immediately.
+      if (event !== null && !event.ctrlKey && !event.metaKey
+        && window.matchMedia('(pointer: coarse)').matches) return false
       event?.preventDefault()
       if (event?.repeat === true) return true // held-down Enter must not machine-gun sends
       if (!handlers.canSubmit()) return true

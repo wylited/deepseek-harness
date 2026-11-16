@@ -24,9 +24,30 @@ function lastContent(snapshot: ChatSnapshot, turn: number, skipWarning: boolean)
   return undefined
 }
 
+/** The Turn's opening durable user message, when a fork boundary exists before it. */
+function openingUser(snapshot: ChatSnapshot, turn: number): ChatNode<'user'> | undefined {
+  if (snapshot.timeline.turnOrder.at(-1) !== turn) return undefined
+  for (const key of snapshot.locations.getTurn(turn)) {
+    const node = snapshot.nodes.get(key as string) as ChatNode<'user'> | undefined
+    if (node !== undefined && node.kind === 'user' && node.data.messageId !== undefined && node.data.seq >= 1) return node
+  }
+  return undefined
+}
+
+/** Plain text of the opening user message, in the composer's own join order. */
+function openingUserText(snapshot: ChatSnapshot, turn: number): string | undefined {
+  const node = openingUser(snapshot, turn)
+  if (node === undefined) return undefined
+  const texts: string[] = []
+  for (const block of node.data.content) {
+    if (block.type === 'text' && block.text.trim() !== '') texts.push(block.text)
+  }
+  return texts.join('')
+}
+
 /** Turn-local actions and feature tail over the Location index, independent of Assistant placement. */
 export const TurnTailNodeView = memo(function TurnTailNodeView({
-  node, openFile, forkAt, renderSlot, t, useAccess, useChat, usePerformanceUsage,
+  node, openFile, forkAt, regenerateMessage, renderSlot, t, useAccess, useChat, usePerformanceUsage,
 }: TurnTailNodeViewProps) {
   const detailed = usePerformanceUsage(mode => mode) === 'detailed'
   const forkAllowed = useAccess('session/fork')
@@ -40,6 +61,12 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
       (candidate.kind !== 'text' && candidate.kind !== 'reasoning') || candidate.text.trim() !== '') : undefined
     return block !== undefined && hasAssistantReplyContent([block])
   })
+  // Regeneration re-sends the Turn's original prompt: the opening user
+  // message's seq and text, both absent when this is not the latest Turn or
+  // no forkable boundary precedes it. Strings and undefined stay stable
+  // between snapshots, so both selectors are safe SnapshotStore readers.
+  const regenerateSeq = useChat(snapshot => openingUser(snapshot, data.turn)?.data.seq)
+  const regenerateText = useChat(snapshot => openingUserText(snapshot, data.turn))
   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
     ? node.location.turn
     : undefined
@@ -75,6 +102,9 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
           ? <TurnUsagePanel usage={data.tokenUsage} t={t} />
           : null}
         t={t}
+        {...forkAllowed && regenerateMessage !== undefined && regenerateSeq !== undefined && regenerateText !== undefined
+          ? { onRegenerate: () => { regenerateMessage(regenerateSeq, regenerateText) } }
+          : {}}
       />
     </div>
   )
