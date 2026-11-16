@@ -334,6 +334,8 @@ button.wd-row { font: inherit; color: inherit; }
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
+  overflow-wrap: anywhere;
+  min-width: 0;
   font-family: var(--ds-font-family-code, ui-monospace, monospace);
   font-size: 11px;
   line-height: 1.45;
