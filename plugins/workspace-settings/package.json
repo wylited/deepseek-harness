@@ -1,0 +1,26 @@
+{
+  "name": "workspace-settings",
+  "description": "Per-workspace defaults for NEW sessions: agent preset, model + reasoning effort, sandbox mode, and an MCP server allowlist. Settings persist under $DSH_HOME/workspace-settings/<workspaceId>.json, are editable over the web API (/api/workspace-settings), and are applied host-side when a fresh top-level session is created inside the workspace.",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.0",
+    "node": ">=24.9.0"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "license": "MIT"
+}
