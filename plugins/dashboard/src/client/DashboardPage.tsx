@@ -659,6 +659,14 @@ export function DashboardPage(face: DashboardFace) {
   const reportIds = useMemo(() => rows.map(row => row.sessionId), [rows])
   const reports = useSummaryReports(face, reportIds)
 
+  // Pending ask_user asks read live from the running sessions' event tails —
+  // the host's userQuestions projection is retention-gated and usually empty
+  // for sessions no session page has open, so the tail is the reliable
+  // dashboard-side source (see pendingAskOf). Declared before the questions
+  // map that consumes it.
+  const runningIds = useMemo(() => rows.filter(row => row.running).map(row => row.sessionId), [rows])
+  const pendingAsks = usePendingAsks(face, runningIds)
+
   // Per-session question info and idle summary texts, merged from the list
   // projections and the host poll (see questionInfoOf).
   const questions = useMemo(() => {
@@ -695,15 +703,6 @@ export function DashboardPage(face: DashboardFace) {
       runningWorkspaceCount: groups.roots.filter(node => subtreeRunningCount(node) > 0).length,
     }
   }, [groups, rows])
-
-  // Pending ask_user asks read live from the running sessions' event tails —
-  // the host's userQuestions projection is retention-gated and usually empty
-  // for sessions no session page has open, so the tail is the reliable
-  // dashboard-side source (see pendingAskOf).
-  const pendingAsks = usePendingAsks(
-    face,
-    useMemo(() => rows.filter(row => row.running).map(row => row.sessionId), [rows]),
-  )
 
   // Cold model names arrive through the projections read (same RPC the
   // workspace list uses for cold titles); one attempt per session per mount.
