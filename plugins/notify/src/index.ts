@@ -16,11 +16,11 @@ import { makeNotifyAttentionRoute } from './host/attention-route.ts'
 import type { CredentialsFace, GatewayFace, LoggerFace, SessionEventsFace } from './host/faces.ts'
 
 /**
- * Service names required before `apply` runs; empty because every
- * integration point is optional here (tryGet at apply time). Declared
- * explicitly: the loader's entry creation expects the export.
+ * Services `apply` consumes (tryGet below). Declaring them pins plugin start
+ * AFTER these services exist — without it, apply can run before webServer /
+ * typertGateway / credentials are up and every integration silently no-ops.
  */
-export const inject: readonly string[] = []
+export const inject = ['webServer', 'typertGateway', 'credentials', 'webApp']
 
 /**
  * Plugin configuration (cordis.user.yml row). Defaults notify on with the
