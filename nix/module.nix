@@ -168,6 +168,7 @@ let
         dashboard = "link:${src}/plugins/dashboard";
         keys = "link:${src}/plugins/keys";
         notify = "link:${src}/plugins/notify";
+        workspace-settings = "link:${src}/plugins/workspace-settings";
         perplexity-web = "link:${src}/plugins/perplexity-web";
         restyle = "link:${src}/plugins/restyle";
       };
@@ -342,6 +343,9 @@ let
           name: notify
           config:
             credential: DISCORD_NOTIFY
+    - insert:
+        - id: workspace-settings
+          name: workspace-settings
 
     # Sandbox: keep the env-driven mode/workspaceRoot from the base profile,
     # add the fleet data area as an additional writable root so
@@ -577,7 +581,7 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
       # The profile's link: plugins ship lib/ as a gitignored build output —
       # a fresh clone has none, and the web profile fails their import
       # (ERR_MODULE_NOT_FOUND) at boot without it.
-      for p in dashboard keys notify restyle; do
+      for p in dashboard keys notify restyle workspace-settings; do
         DSH_TELEMETRY_DISABLED=1 ${nodeDir}/bin/node "$src/plugins/$p/build.mjs"
       done
       perplexity=$src/plugins/perplexity-web
