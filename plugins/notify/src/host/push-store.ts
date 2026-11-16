@@ -13,14 +13,12 @@ import z from '@deepseek-ai/schemastery'
 import type { PushSubscriptionRecord } from './push.ts'
 
 /** One stored browser subscription (the PushSubscription JSON the client POSTs). */
-export const PushSubscriptionSchema = z.object({
-  endpoint: z.string().regex(/^https:\/\//),
+const PushSubscriptionSchema = z.object({
+  endpoint: z.string(),
   keys: z.object({ p256dh: z.string(), auth: z.string() }),
-  addedAt: z.string(),
 })
-type ValidRecord = z.infer<typeof PushSubscriptionSchema>
 
-const StoreSchema = z.object({ version: z.const(1), subscriptions: z.array(PushSubscriptionSchema) })
+const SubscribePayload = z.object({ subscription: PushSubscriptionSchema })
 
 interface StoreShape {
   version: 1
@@ -31,8 +29,17 @@ interface StoreShape {
 export function loadSubscriptions(homePath: string): PushSubscriptionRecord[] {
   try {
     const parsed: unknown = JSON.parse(readFileSync(subscriptionsPath(homePath), 'utf8'))
-    const store = StoreSchema(parsed)
-    return store.subscriptions
+    if (typeof parsed !== 'object' || parsed === null || !('subscriptions' in parsed)) return []
+    const raw: unknown = (parsed as { subscriptions: unknown }).subscriptions
+    if (!Array.isArray(raw)) return []
+    const records: PushSubscriptionRecord[] = []
+    for (const entry of raw) {
+      const candidate = PushSubscriptionSchema(entry) as PushSubscriptionRecord
+      if (!candidate.endpoint.startsWith('https://')) continue
+      if (typeof candidate.keys?.p256dh !== 'string' || typeof candidate.keys?.auth !== 'string') continue
+      records.push(candidate)
+    }
+    return records
   } catch {
     return []
   }
@@ -73,8 +80,6 @@ export interface PushRouteDeps {
 }
 
 const MAX_BODY_BYTES = 8 * 1024
-
-const SubscribePayload = z.object({ subscription: PushSubscriptionSchema })
 
 /** Whether the request names this origin (same-origin marker or loopback). */
 function isSameOrigin(req: IncomingMessage): boolean {
@@ -135,10 +140,21 @@ export function makePushRoutes(deps: PushRouteDeps): WebRoute[] {
             writeJson(res, 400, { ok: false, error: 'bad body' })
             return
           }
-          const payload = SubscribePayload(parsed)
-          const record: ValidRecord = {
-            endpoint: payload.subscription.endpoint,
-            keys: payload.subscription.keys,
+          // The vendored schemastery is lenient (no throw on missing fields),
+          // so every field is checked here as well.
+          const outer = SubscribePayload(parsed) as { subscription?: Partial<PushSubscriptionRecord> }
+          const sub = outer.subscription
+          if (sub === undefined
+            || typeof sub.endpoint !== 'string' || !sub.endpoint.startsWith('https://')
+            || sub.keys === undefined
+            || typeof sub.keys.p256dh !== 'string' || sub.keys.p256dh.length === 0
+            || typeof sub.keys.auth !== 'string' || sub.keys.auth.length === 0) {
+            writeJson(res, 400, { ok: false, error: 'bad subscription' })
+            return
+          }
+          const record: PushSubscriptionRecord = {
+            endpoint: sub.endpoint,
+            keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
             addedAt: new Date().toISOString(),
           }
           const total = upsertSubscription(deps.homePath, record).length
