@@ -27,7 +27,7 @@ import { compactTokens, fullTimeLabel, relativeTime } from './format.ts'
 import type { DashboardOverviewView, UsageDayPoint } from '../core/view.ts'
 import type { DashboardSummariesBody, DashboardSummaryReport } from '../core/summary.ts'
 import {
-  RUNNING_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey,
+  RECENT_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey,
   type AgentRow, type SessionsFace, type SessionsListState, type WorkspacesFace,
   type WorkspaceGroupNode, type WorkspaceTarget,
 } from './workspace.ts'
@@ -147,6 +147,130 @@ function statusOf(events: readonly WireEvent[]): string | undefined {
   return toolName === undefined ? assistant : `running: ${toolName}`
 }
 
+/** Envelope shape check + append for one tail frame; true when the tail
+ * state changed (either a snapshot reset or one event appended). */
+function tailPush(raw: unknown, events: WireEvent[]): boolean {
+  if (typeof raw !== 'object' || raw === null || !('type' in raw)) return false
+  if (raw.type === 'snapshot' && 'records' in raw && Array.isArray(raw.records)) {
+    events.length = 0
+    for (const record of raw.records) {
+      if (typeof record === 'object' && record !== null && 'event' in record) {
+        const event = record.event
+        if (typeof event === 'object' && event !== null && 'type' in event && 'data' in event
+          && typeof event.type === 'string') {
+          events.push({ type: event.type, data: event.data })
+        }
+      }
+    }
+    return true
+  }
+  if (raw.type === 'event' && 'event' in raw) {
+    const event = raw.event
+    if (typeof event === 'object' && event !== null && 'type' in event && 'data' in event
+      && typeof event.type === 'string') {
+      events.push({ type: event.type, data: event.data })
+      if (events.length > 120) events.splice(0, events.length - 120)
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * The open ask_user_question call in an event tail, if any: a `tool/call`
+ * naming the ask tool with no matching `tool/result`. The host's
+ * userQuestions projection is retention-gated (units with no reader are not
+ * computed), so the tail is the reliable dashboard-side source. The call
+ * arguments carry the questions verbatim.
+ */
+function pendingAskOf(events: readonly WireEvent[]): PendingQuestionInfo | undefined {
+  let open: { callId: string, arguments: string } | undefined
+  for (const event of events) {
+    if (event.type === 'tool/call') {
+      const callId = dataString(event.data, 'callId')
+      open = dataString(event.data, 'name') === 'ask_user_question' && callId !== undefined
+        ? {
+            callId,
+            arguments: typeof event.data['arguments'] === 'string' ? event.data['arguments'] : '',
+          }
+        : undefined
+    } else if (event.type === 'tool/result' && open !== undefined
+      && dataString(event.data, 'callId') === open.callId) {
+      open = undefined
+    }
+  }
+  if (open === undefined) return undefined
+  try {
+    const parsed: unknown = JSON.parse(open.arguments)
+    if (typeof parsed === 'object' && parsed !== null && 'questions' in parsed
+      && Array.isArray(parsed.questions)) {
+      const questions = parsed.questions.flatMap(question => {
+        if (typeof question !== 'object' || question === null) return []
+        if (!('id' in question) || !('question' in question)) return []
+        if (typeof question.id !== 'string' || typeof question.question !== 'string') return []
+        return [{ id: question.id, question: question.question }]
+      })
+      if (questions.length > 0) return { callId: open.callId, questions }
+    }
+  } catch {
+    // Malformed arguments: fall through to the generic single question.
+  }
+  return { callId: open.callId, questions: [{ id: 'pending', question: 'waiting for your reply' }] }
+}
+
+/**
+ * Live pending ask_user asks for the given (running) sessions, one passive
+ * event tail per session — subscribed only while mounted, aborted on
+ * unmount. Stream failures simply yield no pending read for that session.
+ */
+function usePendingAsks(face: DashboardFace, sessionIds: readonly string[]): ReadonlyMap<string, PendingQuestionInfo> {
+  const [pending, setPending] = useState<ReadonlyMap<string, PendingQuestionInfo>>(() => new Map())
+  const idsKey = sessionIds.join(',')
+  useEffect(() => {
+    const remote = face.sessionRemote
+    if (remote === undefined || idsKey === '') return
+    const ids = idsKey.split(',')
+    const controller = new AbortController()
+    const eventsBySession = new Map<string, WireEvent[]>()
+    const next = (): void => {
+      setPending(previous => {
+        const map = new Map(previous)
+        for (const id of ids) {
+          const events = eventsBySession.get(id)
+          const found = events === undefined ? undefined : pendingAskOf(events)
+          if (found === undefined) map.delete(id)
+          else map.set(id, found)
+        }
+        return map
+      })
+    }
+    const run = async (): Promise<void> => {
+      await Promise.all(ids.map(async id => {
+        const events: WireEvent[] = []
+        eventsBySession.set(id, events)
+        try {
+          const tail = remote.follow(
+            { address: { kind: 'session', sessionId: id }, maxMessages: 40 },
+            controller.signal,
+          )
+          for await (const raw of tail) {
+            if (controller.signal.aborted) return
+            if (tailPush(raw, events)) next()
+          }
+        } catch {
+          // Stream failed or was aborted: the session keeps no pending read.
+        }
+      }))
+    }
+    void run()
+    return () => {
+      controller.abort()
+      setPending(new Map())
+    }
+  }, [face, idsKey])
+  return pending
+}
+
 /**
  * Live status line for one running session: a passive per-session event
  * tail (snapshot + live frames) through the generated session facade —
@@ -162,14 +286,6 @@ function useSessionTail(face: DashboardFace, sessionId: string, enabled: boolean
     const controller = new AbortController()
     let alive = true
     const events: WireEvent[] = []
-    const push = (rawEvent: unknown): void => {
-      if (typeof rawEvent !== 'object' || rawEvent === null) return
-      if (!('type' in rawEvent) || !('data' in rawEvent)) return
-      if (typeof rawEvent.type !== 'string') return
-      // Envelope shape-checked above; payloads stay owner-defined JSON.
-      events.push({ type: rawEvent.type, data: rawEvent.data })
-      if (events.length > 120) events.splice(0, events.length - 120)
-    }
     const run = async (): Promise<void> => {
       try {
         const tail = remote.follow(
@@ -178,18 +294,7 @@ function useSessionTail(face: DashboardFace, sessionId: string, enabled: boolean
         )
         for await (const raw of tail) {
           if (!alive || controller.signal.aborted) return
-          if (typeof raw !== 'object' || raw === null || !('type' in raw)) continue
-          if (raw.type === 'snapshot' && 'records' in raw && Array.isArray(raw.records)) {
-            events.length = 0
-            for (const record of raw.records) {
-              if (typeof record === 'object' && record !== null && 'event' in record) push(record.event)
-            }
-          } else if (raw.type === 'event' && 'event' in raw) {
-            push(raw.event)
-          } else {
-            continue
-          }
-          setLine(statusOf(events))
+          if (tailPush(raw, events)) setLine(statusOf(events))
         }
       } catch {
         // Stream failed or was aborted: the row renders the degraded line.
@@ -330,13 +435,15 @@ function VersionChip({ version }: { version: string | undefined }) {
  * status summary when one is known (`summary`), else its last tail line,
  * else a plain idle time — never an active verb.
  */
-export function FeedItem({ row, now, face, question, summary }: {
+export function FeedItem({ row, now, face, question, summary, workspaceChip }: {
   row: AgentRow
   now: number
   face: DashboardFace
   question: PendingQuestionInfo | undefined
   /** Host-generated idle status summary for this session, when known. */
   summary?: string | undefined
+  /** Workspace name chip for rows rendered outside a group header. */
+  workspaceChip?: string | undefined
 }) {
   const status = useSessionTail(face, row.sessionId, row.running || summary === undefined)
   return (
@@ -355,6 +462,7 @@ export function FeedItem({ row, now, face, question, summary }: {
             <span className="wd-row-sub">↳ {row.parentLabel}</span>
           )}
         </span>
+        {workspaceChip !== undefined && <span className="wd-badge">{workspaceChip}</span>}
         {row.subagent && <span className="wd-badge" data-accent>subagent</span>}
         {row.model !== undefined && <span className="wd-badge">{row.model}</span>}
         <span className="wd-when">{relativeTime(row.updatedAt, now)}</span>
@@ -539,7 +647,6 @@ export function DashboardPage(face: DashboardFace) {
   const now = useNowTicker(30_000)
   const [view, setView] = useState<DashboardOverviewView | undefined>(undefined)
   const refreshAttempted = useRef(new Set<string>())
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
 
   const rows = useMemo(() => projectRows(state, workspaces.items), [state, workspaces])
   const groups = useMemo(
@@ -556,9 +663,11 @@ export function DashboardPage(face: DashboardFace) {
   // projections and the host poll (see questionInfoOf).
   const questions = useMemo(() => {
     const map = new Map<string, PendingQuestionInfo | undefined>()
-    for (const row of rows) map.set(row.sessionId, questionInfoOf(state, reports, row.sessionId))
+    for (const row of rows) {
+      map.set(row.sessionId, questionInfoOf(state, reports, row.sessionId) ?? pendingAsks.get(row.sessionId))
+    }
     return map
-  }, [state, reports, rows])
+  }, [state, reports, rows, pendingAsks])
   const summaryTexts = useMemo(() => {
     const map = new Map<string, string>()
     for (const row of rows) {
@@ -571,31 +680,30 @@ export function DashboardPage(face: DashboardFace) {
     () => rows.filter(row => questions.get(row.sessionId) !== undefined).sort((a, b) => b.updatedAt - a.updatedAt),
     [rows, questions],
   )
-  // The running rows drop the answer box for sessions the needs-you section
-  // already carries, so one question never renders two forms.
-  const groupQuestions = useMemo(() => {
-    const map = new Map(questions)
-    for (const row of needsYou) map.set(row.sessionId, undefined)
-    return map
-  }, [questions, needsYou])
-
-  // The 5 most recently active workspaces lead as full-width rows (running
-  // workspaces always first, most recent activity ordering throughout);
-  // every other workspace (and the row overflow) folds into the one compact
-  // grid row below.
-  const { runningRoots, gridRoots, runningWorkspaceCount } = useMemo(() => {
-    const runningCountOf = new Map(groups.roots.map(node => [workspaceKey(node), subtreeRunningCount(node)]))
-    const ordered = [...groups.roots].sort(
-      (a, b) => (runningCountOf.get(workspaceKey(b)) ?? 0) - (runningCountOf.get(workspaceKey(a)) ?? 0),
-    )
-    const capped = ordered.slice(0, RUNNING_ROW_CAP)
-    const cappedKeys = new Set(capped.map(workspaceKey))
+  // The 5 most recently active agent sessions lead as full-width rows —
+  // running sessions first (they are the actionable ones), then idle by
+  // recency; the workspaces they belong to, and everything else, fold into
+  // the one compact grid row below.
+  const { recentSessions, gridRoots, runningWorkspaceCount } = useMemo(() => {
+    const recent = [...rows]
+      .sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0) || b.updatedAt - a.updatedAt)
+      .slice(0, RECENT_ROW_CAP)
+    const recentIds = new Set(recent.map(row => row.sessionId))
     return {
-      runningRoots: capped,
-      gridRoots: groups.roots.filter(node => !cappedKeys.has(workspaceKey(node))),
-      runningWorkspaceCount: groups.roots.filter(node => (runningCountOf.get(workspaceKey(node)) ?? 0) > 0).length,
+      recentSessions: recent,
+      gridRoots: groups.roots.filter(node => !subtreeRows(node).some(row => recentIds.has(row.sessionId))),
+      runningWorkspaceCount: groups.roots.filter(node => subtreeRunningCount(node) > 0).length,
     }
-  }, [groups])
+  }, [groups, rows])
+
+  // Pending ask_user asks read live from the running sessions' event tails —
+  // the host's userQuestions projection is retention-gated and usually empty
+  // for sessions no session page has open, so the tail is the reliable
+  // dashboard-side source (see pendingAskOf).
+  const pendingAsks = usePendingAsks(
+    face,
+    useMemo(() => rows.filter(row => row.running).map(row => row.sessionId), [rows]),
+  )
 
   // Cold model names arrive through the projections read (same RPC the
   // workspace list uses for cold titles); one attempt per session per mount.
@@ -622,15 +730,6 @@ export function DashboardPage(face: DashboardFace) {
       window.clearInterval(timer)
     }
   }, [face])
-
-  const toggle = (key: string): void => {
-    setCollapsed(previous => {
-      const next = new Set(previous)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
 
   return (
     <div className="wd-page">
@@ -665,32 +764,32 @@ export function DashboardPage(face: DashboardFace) {
         <div className="wd-section-head">
           <h2 className="wd-section-title">Recent agents</h2>
           <span className="wd-section-note">
-            {runningWorkspaceCount === 0
-              ? `nothing running · ${runningRoots.length} most recent shown · a workspace name opens its page`
-              : `${runningWorkspaceCount} running, most recent first${groups.roots.length > runningRoots.length ? ` · first ${runningRoots.length} shown` : ''} · a workspace name opens its page`}
+            {rows.length === 0
+              ? 'no agents yet · workspaces are in the grid below'
+              : `${recentSessions.length} most recent${runningWorkspaceCount > 0 ? ` · ${runningWorkspaceCount} running` : ''} · a workspace name opens its page`}
           </span>
         </div>
         {state.phase === 'pending'
           ? <div className="wd-empty">Loading sessions…</div>
           : rows.length === 0
             ? <div className="wd-zzz" role="status">💤 all agents sleeping</div>
-            : runningRoots.length > 0 && (
+            : (
               <div className="wd-groups">
-                {runningRoots.map(node => (
-                  <WorkspaceGroup
-                    key={workspaceKey(node)}
-                    node={node}
-                    depth={0}
-                    now={now}
-                    face={face}
-                    state={state}
-                    collapsed={collapsed.has(workspaceKey(node))}
-                    collapsedSet={collapsed}
-                    onToggle={toggle}
-                    questions={groupQuestions}
-                    summaries={summaryTexts}
-                  />
-                ))}
+                <div className="wd-group">
+                  <div className="wd-feed">
+                    {recentSessions.map(row => (
+                      <FeedItem
+                        key={row.sessionId}
+                        row={row}
+                        now={now}
+                        face={face}
+                        question={questions.get(row.sessionId)}
+                        summary={summaryTexts.get(row.sessionId)}
+                        workspaceChip={row.workspaceLabel}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
       </section>

@@ -9,9 +9,11 @@
  * - `turn/end` completed (or max-tokens) whose turn produced a final
  *   assistant message — the agent finished and has something to say.
  *
- * Suppression: at enqueue time and again at send time the gateway's
- * `hasLiveClient()` gates the send — a connected client shows the in-page
- * toast instead, so Discord stays quiet whenever dsh is open anywhere.
+ * Suppression: at enqueue time and again at send time an *attentive* client
+ * gates the send — a page whose latest focus report says focused shows the
+ * in-page toast, so Discord stays quiet while dsh is open and on screen;
+ * open-but-backgrounded pages never suppress. Without the attention route,
+ * the gateway's live-client check is the fallback.
  * @module notify/host/notify
  */
 
@@ -34,6 +36,15 @@ const MAX_DELAY_SECONDS = 3600
 
 /** Age after which per-session scratch entries (final text, titles) expire. */
 const SCRATCH_TTL_MS = 6 * 60 * 60 * 1000
+
+/** Age after which a page's focus report is stale and stops suppressing. */
+const FOCUS_TTL_MS = 90 * 1000
+
+/** One web page's most recent focus report. */
+interface FocusReport {
+  focused: boolean
+  at: number
+}
 
 /** One scheduled, possibly superseded notification. */
 interface PendingNotice extends NoticeEmbed {
@@ -74,12 +85,49 @@ export class NotifyService {
   private readonly services: NotifyServices
   private readonly pending = new Map<string, PendingNotice>()
   private readonly scratch = new Map<string, Scratch>()
+  /** Focus reports from open web pages, keyed by page id. */
+  private readonly attention = new Map<string, FocusReport>()
+  /** Whether the attention route is mounted (webServer present). */
+  private attentionGateEnabled = false
   private flushTimer: ReturnType<typeof setTimeout> | undefined
   private credentialAbsentLogged = false
 
   constructor(options: NotifyOptions, services: NotifyServices) {
     this.options = options
     this.services = services
+  }
+
+  /** Record one page's focus state (called from the attention route). */
+  setAttention(pageId: string, focused: boolean): void {
+    const id = pageId.slice(0, 128)
+    if (id === '') return
+    this.attention.set(id, { focused, at: Date.now() })
+  }
+
+  /**
+   * Mark the attention gate active: an attention route reports page focus,
+   * so suppression keys on focused pages (a backgrounded phone must not
+   * silence Discord). Without the route the legacy live-client gate applies.
+   */
+  enableAttentionGate(): void {
+    this.attentionGateEnabled = true
+  }
+
+  /**
+   * Whether any viewer is actually attending: an open page whose latest
+   * focus report (within the TTL) says focused. Stale or unfocused pages
+   * never suppress — the Discord ping is the point of a backgrounded dsh.
+   */
+  private hasAttentiveClient(): boolean {
+    if (!this.attentionGateEnabled) {
+      return this.services.gateway?.hasLiveClient() === true
+    }
+    const now = Date.now()
+    for (const [pageId, report] of this.attention) {
+      if (now - report.at > FOCUS_TTL_MS) this.attention.delete(pageId)
+      else if (report.focused) return true
+    }
+    return false
   }
 
   /** Clamped delay applied to every send. */
@@ -199,7 +247,7 @@ export class NotifyService {
   /** Store (replacing any prior entry for the session) and arm the flush. */
   private enqueue(session: SessionLike, notice: Omit<PendingNotice, 'sendAt'>): void {
     // A live client shows the in-page toast — Discord stays silent entirely.
-    if (this.services.gateway?.hasLiveClient() === true) return
+    if (this.hasAttentiveClient()) return
     this.pending.set(session.id, { ...notice, sendAt: Date.now() + this.delayMs })
     this.arm()
   }
@@ -233,7 +281,7 @@ export class NotifyService {
 
     // Re-check before send: a client that subscribed during the delay window
     // cancels the send — the client toast already carried the news.
-    if (this.services.gateway?.hasLiveClient() === true) {
+    if (this.hasAttentiveClient()) {
       this.services.logger.debug(`notify: client connected during delay; dropped ${String(due.length)} Discord notice(s)`)
       return
     }

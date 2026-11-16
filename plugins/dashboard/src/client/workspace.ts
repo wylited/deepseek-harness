@@ -95,9 +95,10 @@ export interface AgentRow {
   workspaceLabel: string | undefined
 }
 
-/** How many running workspace rows the landing feed shows at most: the most
- *  recently active ones; the rest fold into the compact grid below. */
-export const RUNNING_ROW_CAP = 5
+/** How many agent-session rows the landing feed shows at most: the most
+ *  recently active ones (running first); their workspaces and everything
+ *  else fold into the compact grid below. */
+export const RECENT_ROW_CAP = 5
 
 /** Workspace basenames that read as noise on a personal page: this repo's
  *  checkout dir. The parent directory names the checkout more usefully. */

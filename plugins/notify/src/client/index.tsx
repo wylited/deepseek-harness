@@ -268,6 +268,43 @@ export function apply(ctx: NotifyContext): void {
     return () => { document.removeEventListener('pointerdown', askPermission, { capture: true }) }
   }, 'notify: notification permission')
 
+  // Attention reporting: the host suppresses Discord pings only while some
+  // page reports focused (heartbeat refreshes the 90s TTL). A backgrounded
+  // phone reports unfocused, so the ping still lands. Reports ride
+  // keepalive fetches so a page closing while focused releases the gate.
+  ctx.effect(() => {
+    const pageId = (() => {
+      const existing = sessionStorage.getItem('dsh-notify-page-id')
+      if (existing !== null) return existing
+      const fresh = `page-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+      sessionStorage.setItem('dsh-notify-page-id', fresh)
+      return fresh
+    })()
+    const report = (keepalive: boolean): void => {
+      const focused = document.visibilityState === 'visible' && document.hasFocus()
+      try {
+        void fetch('/api/notify/attention', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ pageId, focused }),
+          keepalive,
+        }).catch(() => {})
+      } catch { /* fetch unavailable: the TTL simply expires the report */ }
+    }
+    report(false)
+    const heartbeat = window.setInterval(() => report(false), 60_000)
+    const onVisibility = (): void => report(false)
+    const onHide = (): void => report(true)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      window.clearInterval(heartbeat)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('pagehide', onHide)
+      onHide()
+    }
+  }, 'notify: attention reporting')
+
   ctx.effect(() => {
     const stopStatus = remote.$on('api-session/status', (sessionId, running) => {
       if (running) return

@@ -12,6 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { NotifyService, type NotifyServices } from './host/notify.ts'
+import { makeNotifyAttentionRoute } from './host/attention-route.ts'
 import type { CredentialsFace, GatewayFace, LoggerFace, SessionEventsFace } from './host/faces.ts'
 
 /**
@@ -68,4 +69,13 @@ export function apply(ctx: Context, config: Config): void {
   const register: SessionEventsFace['on'] = (name, listener, options) =>
     (ctx as Context & SessionEventsFace).on(name, listener, options)
   ctx.effect(() => service.start(register), 'notify: session feed')
+  // Focus gate: with a web server, pages report focus and suppression keys
+  // on attentive viewers (a backgrounded phone must not silence Discord).
+  // Without one the service falls back to the gateway's live-client check.
+  const webServer = tryGet<{ register(route: unknown): (() => void) | undefined }>(ctx, 'webServer')
+  if (webServer !== undefined) {
+    const disposeAttention = webServer.register(makeNotifyAttentionRoute((pageId, focused) => service.setAttention(pageId, focused)))
+    service.enableAttentionGate()
+    if (disposeAttention !== undefined) ctx.effect(() => disposeAttention, 'notify: attention route')
+  }
 }
