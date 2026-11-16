@@ -579,17 +579,21 @@ export function DashboardPage(face: DashboardFace) {
     return map
   }, [questions, needsYou])
 
-  // Workspaces with running sessions lead as full-width rows, most recent
-  // activity first, capped; every other workspace (and the row overflow)
-  // folds into the one compact grid row below.
+  // The 5 most recently active workspaces lead as full-width rows (running
+  // workspaces always first, most recent activity ordering throughout);
+  // every other workspace (and the row overflow) folds into the one compact
+  // grid row below.
   const { runningRoots, gridRoots, runningWorkspaceCount } = useMemo(() => {
-    const withRunning = groups.roots.filter(node => subtreeRunningCount(node) > 0)
-    const capped = withRunning.slice(0, RUNNING_ROW_CAP)
+    const runningCountOf = new Map(groups.roots.map(node => [workspaceKey(node), subtreeRunningCount(node)]))
+    const ordered = [...groups.roots].sort(
+      (a, b) => (runningCountOf.get(workspaceKey(b)) ?? 0) - (runningCountOf.get(workspaceKey(a)) ?? 0),
+    )
+    const capped = ordered.slice(0, RUNNING_ROW_CAP)
     const cappedKeys = new Set(capped.map(workspaceKey))
     return {
       runningRoots: capped,
       gridRoots: groups.roots.filter(node => !cappedKeys.has(workspaceKey(node))),
-      runningWorkspaceCount: withRunning.length,
+      runningWorkspaceCount: groups.roots.filter(node => (runningCountOf.get(workspaceKey(node)) ?? 0) > 0).length,
     }
   }, [groups])
 
@@ -659,11 +663,11 @@ export function DashboardPage(face: DashboardFace) {
       )}
       <section className="wd-section">
         <div className="wd-section-head">
-          <h2 className="wd-section-title">Ongoing agents</h2>
+          <h2 className="wd-section-title">Recent agents</h2>
           <span className="wd-section-note">
-            {runningRoots.length === 0
-              ? 'nothing running · resting workspaces are in the grid below'
-              : `${runningWorkspaceCount} running, most recent first${runningWorkspaceCount > runningRoots.length ? ` · first ${runningRoots.length} shown` : ''} · a workspace name opens its page`}
+            {runningWorkspaceCount === 0
+              ? `nothing running · ${runningRoots.length} most recent shown · a workspace name opens its page`
+              : `${runningWorkspaceCount} running, most recent first${groups.roots.length > runningRoots.length ? ` · first ${runningRoots.length} shown` : ''} · a workspace name opens its page`}
           </span>
         </div>
         {state.phase === 'pending'
