@@ -58,7 +58,16 @@ export const WorkspaceSettingsSchema = z.object({
 
 /** Validate one untrusted settings document; throws on shape violations. */
 export function parseWorkspaceSettings(raw: unknown): WorkspaceSettings {
-  return WorkspaceSettingsSchema(raw)
+  const parsed = WorkspaceSettingsSchema(raw) as WorkspaceSettings
+  // The vendored schemastery is lenient (missing fields come back defaulted,
+  // e.g. `mcpServers: []`), and an empty allowlist would deny every MCP tool.
+  // Absence must stay absence: keep only the keys the raw document carries.
+  const clean: WorkspaceSettings = {}
+  if (typeof raw !== 'object' || raw === null) return clean
+  for (const key of WORKSPACE_SETTINGS_KEYS) {
+    if (key in raw) (clean as Record<string, unknown>)[key] = parsed[key]
+  }
+  return clean
 }
 
 /** Field names in one raw document that the schema does not admit. */
