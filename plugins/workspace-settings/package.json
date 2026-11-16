@@ -10,11 +10,6 @@
     "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
-  "dsh": {
-    "client": {
-      "platform": "web"
-    }
-  },
   "engines": {
     "dsh": ">=0.2.0",
     "node": ">=24.9.0"
