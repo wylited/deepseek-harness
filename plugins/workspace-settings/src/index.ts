@@ -4,9 +4,9 @@
  * `$DSH_HOME/workspace-settings/<workspaceId>.json`, are read and replaced
  * over `/api/workspace-settings`, and are enforced host-side when a fresh
  * top-level session is announced inside the workspace (sandbox mode,
- * session-scoped model selection, MCP tool allowlist). There is no client
- * half yet; `dsh.client.platform: web` names the platform the future client
- * half targets.
+ * session-scoped model selection, MCP tool allowlist). Host-only plugin:
+ * the `dsh.bundle.patch` manifest declares the profile insert row (the
+ * perplexity-web pattern for plugins without a client half).
  * @module workspace-settings
  */
 

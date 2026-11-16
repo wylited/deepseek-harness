@@ -1,0 +1,9 @@
+# Per-workspace defaults (host-only plugin). The row carries no config on
+# purpose: the plugin's schema defaults `enabled: true`, and a config value
+# here would pin it. Consume the API from the UI or curl:
+#   GET  /api/workspace-settings            (all workspaces + settings)
+#   GET  /api/workspace-settings/<id>
+#   PUT  /api/workspace-settings/<id>       (full-document replace)
+- insert:
+    - id: workspace-settings
+      name: workspace-settings

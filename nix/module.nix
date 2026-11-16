@@ -343,9 +343,6 @@ let
           name: notify
           config:
             credential: DISCORD_NOTIFY
-    - insert:
-        - id: workspace-settings
-          name: workspace-settings
 
     # Sandbox: keep the env-driven mode/workspaceRoot from the base profile,
     # add the fleet data area as an additional writable root so
