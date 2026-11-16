@@ -124,10 +124,10 @@ interface NotifyPushFace {
   dismiss(): void
 }
 
-/** Chip state behind a `useSyncExternalStore` seam, mirroring `ToastQueue`. */
 class PushChipStore {
   private status: PushStatus = { kind: 'hidden' }
   private dismissed = false
+  private snapshot: PushSnapshot = { status: { kind: 'hidden' }, dismissed: false }
   private readonly listeners = new Set<() => void>()
 
   subscribe = (listener: () => void): (() => void) => {
@@ -135,7 +135,8 @@ class PushChipStore {
     return () => { this.listeners.delete(listener) }
   }
 
-  getSnapshot = (): PushSnapshot => ({ status: this.status, dismissed: this.dismissed })
+  /** Cached: `useSyncExternalStore` loops forever on a fresh object per call. */
+  getSnapshot = (): PushSnapshot => this.snapshot
 
   /** Enter a state; a kind change re-arms a chip the user dismissed. */
   set(status: PushStatus): void {
@@ -176,6 +177,7 @@ class PushChipStore {
   }
 
   private changed(): void {
+    this.snapshot = { status: this.status, dismissed: this.dismissed }
     for (const listener of this.listeners) listener()
   }
 }
