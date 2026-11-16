@@ -1171,7 +1171,7 @@ in
         ];
       };
       };
-      dsh-notify-failure@"dsh-notify-failure@" = {
+      "dsh-notify-failure@" = {
         description = "dsh — Discord webhook page for a failed unit (%i)";
         serviceConfig = {
           Type = "oneshot";
