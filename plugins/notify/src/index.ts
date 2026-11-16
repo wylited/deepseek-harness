@@ -16,6 +16,13 @@ import { makeNotifyAttentionRoute } from './host/attention-route.ts'
 import type { CredentialsFace, GatewayFace, LoggerFace, SessionEventsFace } from './host/faces.ts'
 
 /**
+ * Service names required before `apply` runs; empty because every
+ * integration point is optional here (tryGet at apply time). Declared
+ * explicitly: the loader's entry creation expects the export.
+ */
+export const inject: readonly string[] = []
+
+/**
  * Plugin configuration (cordis.user.yml row). Defaults notify on with the
  * 45-second delay; a row that replaces the config only needs the fields it
  * wants to change.
