@@ -62,7 +62,7 @@ export function apply(ctx: Context, config: Config): void {
   if (webServer !== undefined && registry !== undefined) {
     for (const route of makeWorkspaceSettingsRoutes({ homePath, registry, logger: logger as LoggerFace })) {
       const dispose = webServer.register(route)
-      if (dispose !== undefined) faces.effect(() => dispose(), `workspace-settings: route ${route.path}`)
+      if (dispose !== undefined) faces.effect(() => dispose, `workspace-settings: route ${route.path}`)
     }
   }
   if (registry !== undefined) {
@@ -73,6 +73,6 @@ export function apply(ctx: Context, config: Config): void {
       sandboxPolicyReady: sandboxPolicy !== undefined,
       logger: logger as LoggerFace,
     })
-    faces.effect(() => disposeEnforcement(), 'workspace-settings: session feed')
+    faces.effect(() => disposeEnforcement, 'workspace-settings: session feed')
   }
 }

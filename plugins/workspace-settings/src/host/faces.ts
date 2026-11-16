@@ -89,7 +89,8 @@ export interface EventsFace {
 export interface PluginContextFace extends EventsFace {
   logger(name: string): LoggerFace
   get(name: string): unknown
-  effect(dispose: () => void, label?: string): unknown
+  /** Cordis contract: runs immediately, and its return value is the disposer. */
+  effect(execute: () => unknown, label?: string): unknown
 }
 
 /** The web server's route table (`ctx.webServer`). */
