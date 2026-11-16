@@ -50,6 +50,7 @@ function tryGet<T>(ctx: Context, name: string): T | undefined {
 /** Host plugin body: one global feed subscription tied to this fiber. */
 export function apply(ctx: Context, config: Config): void {
   const logger = ctx.logger('notify')
+  logger.warn(`notify: plugin apply — enabled=${String(config.enabled)} delay=${String(config.delaySeconds)}s credential=${config.credential}`)
   const webApp = tryGet<{ getAdvertisedUrl(): string }>(ctx, 'webApp')
   const services: NotifyServices = {
     // Owner-client presence ("is dsh open anywhere"): the gateway's live
