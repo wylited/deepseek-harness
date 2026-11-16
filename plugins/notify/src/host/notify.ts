@@ -246,8 +246,11 @@ export class NotifyService {
 
   /** Store (replacing any prior entry for the session) and arm the flush. */
   private enqueue(session: SessionLike, notice: Omit<PendingNotice, 'sendAt'>): void {
-    // A live client shows the in-page toast — Discord stays silent entirely.
-    if (this.hasAttentiveClient()) return
+    // An attentive client shows the in-page toast — Discord stays silent.
+    if (this.hasAttentiveClient()) {
+      this.services.logger.info(`notify: suppressed ${notice.kind} for ${session.id} — attentive page reported (${String(this.attention.size)} tracked)`)
+      return
+    }
     this.pending.set(session.id, { ...notice, sendAt: Date.now() + this.delayMs })
     this.arm()
   }
@@ -282,7 +285,7 @@ export class NotifyService {
     // Re-check before send: a client that subscribed during the delay window
     // cancels the send — the client toast already carried the news.
     if (this.hasAttentiveClient()) {
-      this.services.logger.debug(`notify: client connected during delay; dropped ${String(due.length)} Discord notice(s)`)
+      this.services.logger.info(`notify: attentive page appeared during delay; dropped ${String(due.length)} Discord notice(s)`)
       return
     }
 
