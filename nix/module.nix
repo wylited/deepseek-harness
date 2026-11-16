@@ -1055,7 +1055,9 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
     ProtectSystem = "strict";
     ReadWritePaths = [ cfg.stateDir ];
     ProtectHome = true;
-    ProtectKernelTunables = true;
+    # NO ProtectKernelTunables here: its masked /proc bind-mounts make
+    # bwrap's `--proc /proc` fail with EPERM inside the service, which
+    # fail-closes the whole file sandbox. Bisected on warden 2026-11-16.
     ProtectKernelModules = true;
     ProtectKernelLogs = true;
     ProtectControlGroups = true;
