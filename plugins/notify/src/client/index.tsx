@@ -387,6 +387,10 @@ const CHIP_DISMISS: CSSProperties = {
  * and mount the overlay host. Absent services degrade to a no-op plugin.
  * @param ctx - client root context.
  */
+/** Faces {@link apply} needs; without this declaration the module system hands
+ * `apply` a context with no services and it silently degrades to a no-op. */
+export const inject = ['sessions', 'remote', 'slots', 'uiWorkspace']
+
 export function apply(ctx: NotifyContext): void {
   const ui = require('@deepseek-ai/dsh-client-ui-primitives') as Partial<UiPrimitives>
   const toast = ui.Toast
