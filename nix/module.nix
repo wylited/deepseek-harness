@@ -343,6 +343,18 @@ let
           config:
             credential: DISCORD_NOTIFY
 
+    # Sandbox: keep the env-driven mode/workspaceRoot from the base profile,
+    # add the fleet data area as an additional writable root so
+    # workspace-write sessions can stage archives there (HTB drops etc.)
+    # without escalation. Row replaces the base sandbox-policy row, so every
+    # field is restated (patch rows REPLACE the complete config value).
+    - id: sandbox-policy
+      config:
+        mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+        workspaceRoot: !!js process.cwd()
+        additionalWritableRoots:
+          - ${cfg.stateDir}/data
+
     # Sure (sure.ts.wyli.tech) — personal finance MCP over streamable-http.
     # Same tool registry as Sure's builtin assistant (get/update transactions,
     # rules, budgets, transfers…). The bearer token rides the credential seam
@@ -786,6 +798,32 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
     echo "dsh-update: active slot is now $idle"
   '';
 
+  # Discord failure pager. Triggered by OnFailure= on dsh-update and the
+  # dsh@ slot units; %i (the template instance) is the failing unit's full
+  # name. Reads the webhook URL from the credentials seam at fire time —
+  # the URL never appears on a command line, in the unit, or in a log.
+  notifyFailureScript = pkgs.writeShellScript "dsh-notify-failure" ''
+    set -euo pipefail
+    unit="''${1:?failing unit name required}"
+    creds="${home}/.credentials.yaml"
+    url="$(sed -n 's/^[[:space:]]*DISCORD_NOTIFY:[[:space:]]*//p' "$creds" 2>/dev/null | head -n 1 || true)"
+    if [ -z "$url" ]; then
+      echo "dsh-notify-failure: no DISCORD_NOTIFY ref in $creds; skipping webhook" >&2
+      exit 0
+    fi
+    case "$url" in
+      https://discord.com/api/webhooks/*|https://discordapp.com/api/webhooks/*|https://ptb.discord.com/api/webhooks/*|https://canary.discord.com/api/webhooks/*) ;;
+      *) echo "dsh-notify-failure: DISCORD_NOTIFY ref is not a Discord webhook URL; skipping" >&2; exit 0;;
+    esac
+    log="$(journalctl -u "$unit" -n 25 --no-pager 2>/dev/null | tail -c 3500 || true)"
+    if [ -z "$log" ]; then log="(no journal output captured)"; fi
+    ${pkgs.jq}/bin/jq -n --arg title "dsh failed: $unit" --arg body "$log" \
+      '{embeds:[{title:$title,description:("````\n"+$body+"\n````"),color:15158332}]}' \
+    | ${pkgs.curl}/bin/curl -sS --max-time 15 -X POST -H 'content-type: application/json' -d @- "$url" >/dev/null \
+      || echo "dsh-notify-failure: webhook POST failed (continuing)" >&2
+    echo "dsh-notify-failure: notified about $unit"
+  '';
+
   # Watchdog decision phase, run AS the dsh user (all state access — the
   # unit's bounding set strips CAP_DAC_OVERRIDE, so root cannot even open
   # the 0700 stateDir's lock). Arg $1 = the root wrapper's health verdict
@@ -1079,6 +1117,9 @@ in
         # .active-slot, the default active slot is a, and b exists solely to
         # receive flips (booting both would race the shared profile tree).
         wantedBy = lib.optionals (slot == "a") [ "multi-user.target" ];
+        # A slot only reaches "failed" when Restart=on-failure gives up —
+        # page Discord then, not on every crash-restart.
+        onFailure = [ "dsh-notify-failure@%n.service" ];
         serviceConfig = dshServiceConfig // {
           # Same boot the repo's ./dsh wrapper performs (pnpm dsh = node
           # --import tsx/esm apps/cli/src/bin.ts); the connection layer's trust
@@ -1101,6 +1142,7 @@ in
         description = "dsh — fast-forward the fork clone, rebuild, flip blue-green slots";
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
+      onFailure = [ "dsh-notify-failure@%n.service" ];
       serviceConfig = {
         Type = "oneshot";
         ExecStart = "${updateScript}";
@@ -1128,6 +1170,19 @@ in
           "CAP_SETGID"
         ];
       };
+      };
+      dsh-notify-failure@"dsh-notify-failure@" = {
+        description = "dsh — Discord webhook page for a failed unit (%i)";
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = "${notifyFailureScript} %i";
+          Environment = [ "PATH=/run/current-system/sw/bin" ];
+          NoNewPrivileges = true;
+          PrivateTmp = true;
+          ProtectSystem = "strict";
+          ProtectHome = true;
+          RestrictSUIDSGID = true;
+        };
       };
       dsh-watchdog = {
         description = "dsh — watchdog: 3 failed health checks of the active slot roll back to the last-known-good slot";
@@ -1190,6 +1245,10 @@ in
 
     # Self-redeploy: the in-session harness runs as dsh and may start the
     # update unit itself — and nothing else.
+    # GitHub CLI — in-session SWE work (usthing workspace: issues/PRs/push
+    # via gh as git credential helper; token arrives through the unit env).
+    environment.systemPackages = [ pkgs.gh ];
+
     security.polkit.enable = true;
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
