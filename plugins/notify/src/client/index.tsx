@@ -14,6 +14,13 @@
  * "completion unread"). There is no richer viewed-session signal client-side;
  * this is the simplest correct one.
  *
+ * When the deployment serves a VAPID key, the same overlay also hosts a push
+ * chip: while phone push is not active it offers to enable it (an explicit
+ * click — the only place permission is ever requested from, since a
+ * document-wide pointerdown never qualified as a user gesture on Firefox),
+ * it names a blocked permission instead of hiding it, and it reports every
+ * subscribe failure with its reason.
+ *
  * Host events are consumed through the forwarded feed only (`ctx.remote.$on`),
  * so this half never polls: `api-session/status` running→false announces a
  * finished turn, and the `user-questions/request` waterfall (always delegated
@@ -22,6 +29,7 @@
  */
 
 import { useSyncExternalStore } from 'react'
+import type { CSSProperties } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 
 /** The shared Toast primitive, resolved from the boot graph's module table. */
@@ -80,6 +88,92 @@ class ToastQueue {
   }
 
   getSnapshot = (): readonly ToastItem[] => this.items
+
+  private changed(): void {
+    for (const listener of this.listeners) listener()
+  }
+}
+
+/** Push chip states; `hidden` and `ready` render nothing. */
+type PushStatus =
+  | { readonly kind: 'hidden' }
+  | { readonly kind: 'ready' }
+  | { readonly kind: 'offer' }
+  | { readonly kind: 'busy' }
+  | { readonly kind: 'denied' }
+  | { readonly kind: 'error'; readonly reason: string }
+
+/** Snapshot the chip subscribes to. */
+interface PushSnapshot {
+  readonly status: PushStatus
+  readonly dismissed: boolean
+}
+
+/** Terminal report of one subscribe attempt. `unsupported` marks an
+ * environment that can never push: the chip hides instead of nagging. */
+interface PushOutcome {
+  readonly ok: boolean
+  readonly unsupported: boolean
+  readonly reason: string
+}
+
+/** The face the overlay-mounted push chip receives via the slot's `inject`. */
+interface NotifyPushFace {
+  store: PushChipStore
+  enable(): void
+  dismiss(): void
+}
+
+/** Chip state behind a `useSyncExternalStore` seam, mirroring `ToastQueue`. */
+class PushChipStore {
+  private status: PushStatus = { kind: 'hidden' }
+  private dismissed = false
+  private readonly listeners = new Set<() => void>()
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  getSnapshot = (): PushSnapshot => ({ status: this.status, dismissed: this.dismissed })
+
+  /** Enter a state; a kind change re-arms a chip the user dismissed. */
+  set(status: PushStatus): void {
+    if (status.kind === this.status.kind && status.kind !== 'error') return
+    if (status.kind === 'error' && this.status.kind === 'error' && this.status.reason === status.reason) return
+    if (status.kind !== this.status.kind) this.dismissed = false
+    this.status = status
+    this.changed()
+  }
+
+  dismiss(): void {
+    if (this.dismissed) return
+    this.dismissed = true
+    this.changed()
+  }
+
+  /**
+   * Reconcile the chip with the browser permission while it idles on an
+   * offer/denied/error state — the path of a user who enabled the site in
+   * browser settings and came back. Returns 'arm' when the permission is now
+   * granted and the subscription is not known-good; the caller then runs the
+   * subscribe pipeline silently.
+   */
+  syncPermission(): 'arm' | 'none' {
+    if (!('Notification' in window)) return 'none'
+    const kind = this.status.kind
+    if (kind !== 'offer' && kind !== 'denied' && kind !== 'error') return 'none'
+    const permission = Notification.permission
+    if (permission === 'denied') {
+      this.set({ kind: 'denied' })
+      return 'none'
+    }
+    if (permission === 'default') {
+      this.set({ kind: 'offer' })
+      return 'none'
+    }
+    return 'arm'
+  }
 
   private changed(): void {
     for (const listener of this.listeners) listener()
@@ -208,6 +302,87 @@ function NotifyToasts({ queue, openSession }: NotifyToastFace): ReactNode {
 }
 
 /**
+ * The shell-overlay push chip. Visible exactly while phone push is not
+ * active and the environment supports it: an offer to enable, the blocked
+ * permission spelled out (a Firefox profile that once denied can only
+ * recover through browser settings — the chip is where that is said), or
+ * the reason a subscribe attempt failed. `hidden`/`ready`/dismissed render
+ * nothing.
+ */
+function NotifyPushChip({ store, enable, dismiss }: NotifyPushFace): ReactNode {
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const { status, dismissed } = snapshot
+  if (dismissed || status.kind === 'hidden' || status.kind === 'ready') return null
+  const copy = status.kind === 'offer' ? 'Enable phone push'
+    : status.kind === 'busy' ? 'Enabling phone push…'
+    : status.kind === 'denied' ? 'Push blocked — allow notifications for this site in browser settings'
+    : `Phone push failed — ${status.reason}`
+  return (
+    <div style={CHIP_STYLE} data-dsh-notify-push>
+      <span style={CHIP_TEXT}>{copy}</span>
+      {(status.kind === 'offer' || status.kind === 'error') && (
+        <button type="button" style={CHIP_ACTION} onClick={enable}>
+          {status.kind === 'offer' ? 'Enable' : 'Retry'}
+        </button>
+      )}
+      {status.kind !== 'busy' && (
+        <button type="button" style={CHIP_DISMISS} aria-label="Dismiss" title="Dismiss" onClick={dismiss}>×</button>
+      )}
+    </div>
+  )
+}
+
+/** Chip surface: the shared toast material (dark in both themes), anchored
+ * bottom-right inside the frame-wide overlay layer, clear of the top-center
+ * toast banner. */
+const CHIP_STYLE: CSSProperties = {
+  position: 'absolute',
+  right: 'max(16px, env(safe-area-inset-right))',
+  bottom: 'max(16px, env(safe-area-inset-bottom))',
+  zIndex: 1,
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 8,
+  boxSizing: 'border-box',
+  width: 'max-content',
+  maxWidth: 'min(360px, calc(100vw - 32px))',
+  padding: '10px 12px',
+  borderRadius: 'var(--dsw-radius-lg, 16px)',
+  background: 'var(--dsw-alias-toast-bg, rgba(23, 26, 38, 0.96))',
+  color: 'var(--dsw-alias-toast-label, rgb(240, 242, 245))',
+  fontSize: 13,
+  lineHeight: '20px',
+  boxShadow: 'var(--dsw-shadow-lv3, 0 8px 24px rgba(0, 0, 0, 0.24))',
+  pointerEvents: 'auto',
+}
+
+const CHIP_TEXT: CSSProperties = { minWidth: 0 }
+
+/** Action text: the toast action's deepseek blue, same no-underline idiom. */
+const CHIP_ACTION: CSSProperties = {
+  flex: 'none',
+  padding: 0,
+  border: 0,
+  background: 'none',
+  color: 'var(--dsw-static-deepseek-400, rgb(77, 133, 247))',
+  fontFamily: 'inherit',
+  fontSize: 13,
+  lineHeight: '20px',
+  cursor: 'pointer',
+}
+
+const CHIP_DISMISS: CSSProperties = {
+  flex: 'none',
+  padding: 0,
+  border: 0,
+  background: 'none',
+  color: 'var(--dsw-alias-label-secondary, rgb(160, 166, 178))',
+  fontSize: 15,
+  lineHeight: '20px',
+  cursor: 'pointer',
+}
+
+/**
  * Client plugin body: subscribe to the forwarded session feed, queue toasts,
  * and mount the overlay host. Absent services degrade to a no-op plugin.
  * @param ctx - client root context.
@@ -255,23 +430,82 @@ export function apply(ctx: NotifyContext): void {
     systemNotify(item)
   }
 
-  // Request the browser-notification permission lazily, once, on first use —
-  // the existing DOM API; no new plumbing. Grant also arms the web-push
-  // subscription (same permission on every shipping browser).
-  let permissionAsked = false
-  const askPermission = (): void => {
-    if (permissionAsked || !('Notification' in window)) return
-    permissionAsked = true
-    if (Notification.permission === 'default') {
-      void Notification.requestPermission().then(granted => {
-        if (granted === 'granted') void setupPushSubscription(openSession)
+  // Phone push. Permission is requested only from the chip's own click: the
+  // previous document-wide `pointerdown` auto-request ran once, was not
+  // honored as a user gesture on Firefox (its prompt never appears), and
+  // left denied or dismissed profiles silent forever.
+  const push = new PushChipStore()
+
+  /** Background arm (permission already granted): silent success, the chip
+   * carries the reason on failure. */
+  const armPush = (): void => {
+    void subscribePush(push).then(outcome => {
+      if (outcome.ok) push.set({ kind: 'ready' })
+      else if (!outcome.unsupported) push.set({ kind: 'error', reason: outcome.reason })
+    })
+  }
+
+  /** The chip's Enable/Retry: ask inside the click's user gesture (Firefox
+   * requires it), then subscribe and POST, toasting the outcome. */
+  const enablePush = (): void => {
+    if (push.getSnapshot().status.kind === 'busy') return
+    push.set({ kind: 'busy' })
+    const run = (): void => {
+      void subscribePush(push).then(outcome => {
+        if (outcome.ok) {
+          push.set({ kind: 'ready' })
+          queue.push({ sessionId: undefined, text: 'Phone push enabled', holdMs: DONE_HOLD_MS })
+        } else if (!outcome.unsupported) {
+          push.set({ kind: 'error', reason: outcome.reason })
+          queue.push({ sessionId: undefined, text: `Phone push failed — ${outcome.reason}`, holdMs: QUESTION_HOLD_MS })
+        }
       })
     }
+    if ('Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission().then(permission => {
+        if (permission === 'granted') run()
+        else push.set(permission === 'denied' ? { kind: 'denied' } : { kind: 'offer' })
+      }, (error: unknown) => {
+        push.set({ kind: 'error', reason: pushErrorReason(error) })
+      })
+    } else {
+      run()
+    }
   }
+
+  const pushFace: NotifyPushFace = { store: push, enable: enablePush, dismiss: (): void => push.dismiss() }
+
+  // Probe once per page load: without a served VAPID key (or with a dead
+  // endpoint) this deployment has no push channel at all and the chip stays
+  // hidden. Otherwise surface the current permission state, and arm right
+  // away when a previous visit already granted it.
   ctx.effect(() => {
-    document.addEventListener('pointerdown', askPermission, { once: true, capture: true })
-    return () => { document.removeEventListener('pointerdown', askPermission, { capture: true }) }
-  }, 'notify: notification permission')
+    void pushKey().then(key => {
+      if (!key.supported || !('Notification' in window)) {
+        push.set({ kind: 'hidden' })
+        return
+      }
+      const permission = Notification.permission
+      if (permission === 'denied') push.set({ kind: 'denied' })
+      else if (permission === 'default') push.set({ kind: 'offer' })
+      else armPush()
+    }, (error: unknown) => {
+      pushLog('warn', `push-key probe failed: ${pushErrorReason(error)}`)
+      push.set({ kind: 'hidden' })
+    })
+  }, 'notify: push probe')
+
+  // Returning to the tab re-reads the permission: a user who allowed the
+  // site in browser settings comes back to an armed subscription without a
+  // reload, and a re-blocked one sees the chip say so.
+  ctx.effect(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState !== 'visible') return
+      if (push.syncPermission() === 'arm') armPush()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { document.removeEventListener('visibilitychange', onVisible) }
+  }, 'notify: push permission watch')
 
   // Attention reporting: the host suppresses Discord pings only while some
   // page reports focused (heartbeat refreshes the 90s TTL). A backgrounded
@@ -335,11 +569,6 @@ export function apply(ctx: NotifyContext): void {
     }
   }, 'notify: forwarded feed')
 
-  // Permission already granted (previous visit): arm push right away.
-  if ('Notification' in window && Notification.permission === 'granted') {
-    void setupPushSubscription(openSession)
-  }
-
   // Deep link from the service worker: a tapped notification focuses the app
   // and opens the session it came from.
   if ('serviceWorker' in navigator) {
@@ -361,6 +590,15 @@ export function apply(ctx: NotifyContext): void {
       inject: () => face,
     }, NotifyToasts),
   ), 'notify: overlay toasts')
+
+  // The push chip mounts beside the toasts on the same frame-wide overlay.
+  ctx.effect(() => slots.inject('shell.overlay', () =>
+    slots.register({
+      name: 'shell.overlay',
+      id: 'notify.push',
+      inject: () => pushFace,
+    }, NotifyPushChip),
+  ), 'notify: push chip')
 
   /** Toast the finished session's final assistant words, when readable. */
   async function announceDone(sessionId: string): Promise<void> {
@@ -402,43 +640,106 @@ export function apply(ctx: NotifyContext): void {
   }
 }
 
+/** Client push log: the browser half has no logger service, so a clear
+ * prefix keeps these greppable beside the host's `[connection]` style. */
+function pushLog(level: 'info' | 'warn', message: string): void {
+  if (level === 'warn') console.warn(`[notify] push: ${message}`)
+  else console.info(`[notify] push: ${message}`)
+}
+
+/** One-sentence, jargon-light reason for a failed subscribe step. */
+function pushErrorReason(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'name' in error) {
+    const name: unknown = error.name
+    if (name === 'NotAllowedError') return 'the browser denied the subscription'
+    if (name === 'InvalidStateError') return 'a stale subscription is in the way — reload the page and retry'
+    if (name === 'AbortError') return 'the browser cancelled the subscription'
+  }
+  return error instanceof Error && error.message.length > 0 ? error.message : String(error)
+}
+
+/** An environment that can never push: log it and hide the chip. */
+function pushUnsupported(reason: string): PushOutcome {
+  pushLog('warn', `push unavailable: ${reason}`)
+  return { ok: false, unsupported: true, reason }
+}
+
+/** GET /api/notify/push-key for this page. One probe per load; a rejection
+ * clears itself so a later Enable/Retry probes a server that came back. */
+type PushKeyInfo = { readonly supported: false } | { readonly supported: true; readonly publicKey: string }
+
+let pushKeyQuery: Promise<PushKeyInfo> | undefined
+
+function pushKey(): Promise<PushKeyInfo> {
+  if (pushKeyQuery === undefined) {
+    pushKeyQuery = (async () => {
+      const response = await fetch('/api/notify/push-key', { headers: { accept: 'application/json' } })
+      if (!response.ok) throw new Error(`push-key answered HTTP ${String(response.status)}`)
+      const info: unknown = await response.json()
+      if (typeof info !== 'object' || info === null
+        || !('supported' in info) || info.supported !== true
+        || !('publicKey' in info) || typeof info.publicKey !== 'string' || info.publicKey.length === 0) {
+        return { supported: false } satisfies PushKeyInfo
+      }
+      return { supported: true, publicKey: info.publicKey }
+    })().catch((error: unknown) => {
+      pushKeyQuery = undefined
+      throw error
+    })
+  }
+  return pushKeyQuery
+}
+
 /**
- * Register the service worker and arm a web-push subscription for this
- * browser. Fire-and-forget: any failure leaves local toasts + system
- * notifications working; the host Discord channel is unaffected. Requires
- * the deployment to configure `pushPublicKey` (the host route answers
- * `supported: false` otherwise).
+ * Register the service worker and arm this browser's web-push subscription,
+ * reusing an existing one that already names the server's current VAPID key.
+ * No dead end is silent: every failure logs and reports a reason, and an
+ * `unsupported` outcome (no Push API, insecure origin, no server key) tells
+ * the caller to hide the chip instead of nagging. A subscription the server
+ * refuses is dropped, so no endpoint receives pushes nobody reads.
+ * @param store - chip state the outcome reports into.
+ * @returns ok on a delivered subscription, otherwise why not.
  */
-async function setupPushSubscription(openSession: (sessionId: string) => void): Promise<void> {
+async function subscribePush(store: PushChipStore): Promise<PushOutcome> {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
-    if (location.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(location.hostname)) return
-    const keyResponse = await fetch('/api/notify/push-key', { headers: { accept: 'application/json' } })
-    if (!keyResponse.ok) return
-    const keyInfo: unknown = await keyResponse.json()
-    if (typeof keyInfo !== 'object' || keyInfo === null
-      || !('supported' in keyInfo) || keyInfo.supported !== true
-      || !('publicKey' in keyInfo) || typeof keyInfo.publicKey !== 'string' || keyInfo.publicKey.length === 0) {
-      return
+    if (!('serviceWorker' in navigator)) return pushUnsupported('this browser has no service worker support')
+    if (!('PushManager' in window)) return pushUnsupported('this browser has no Push API')
+    if (!('Notification' in window)) return pushUnsupported('this browser has no Notification API')
+    if (location.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(location.hostname)) {
+      return pushUnsupported('web push needs a secure (https) origin')
     }
+    const key = await pushKey()
+    if (!key.supported) return pushUnsupported('the server has no VAPID push key configured')
     const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
     await navigator.serviceWorker.ready
     const existing = await registration.pushManager.getSubscription()
+    // Firefox exposes no applicationServerKey on the options, so the
+    // comparison fails there and subscribe runs again; the browser folds
+    // that into the existing subscription.
     const subscription = (existing !== null && existing.options.applicationServerKey !== undefined
-      && bytesToB64Url(new Uint8Array(existing.options.applicationServerKey as ArrayBuffer)) === keyInfo.publicKey)
+      && bytesToB64Url(new Uint8Array(existing.options.applicationServerKey as ArrayBuffer)) === key.publicKey)
       ? existing
       : await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlB64ToUint8Array(keyInfo.publicKey),
+          applicationServerKey: urlB64ToUint8Array(key.publicKey),
         })
     const response = await fetch('/api/notify/push-subscribe', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ subscription: subscription.toJSON() }),
     })
-    if (!response.ok) void subscription.unsubscribe()
-  } catch {
-    // Push is best-effort; in-page toasts remain the primary surface.
+    if (!response.ok) {
+      void subscription.unsubscribe().catch((error: unknown) => {
+        pushLog('warn', `unsubscribe after rejected POST: ${pushErrorReason(error)}`)
+      })
+      return { ok: false, unsupported: false, reason: `the server refused the subscription (HTTP ${String(response.status)})` }
+    }
+    pushLog('info', 'subscription delivered')
+    return { ok: true, unsupported: false, reason: '' }
+  } catch (error) {
+    const reason = pushErrorReason(error)
+    pushLog('warn', `subscribe failed: ${reason}`)
+    return { ok: false, unsupported: false, reason }
   }
 }
 

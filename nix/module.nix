@@ -1251,7 +1251,11 @@ in
     # update unit itself — and nothing else.
     # GitHub CLI — in-session SWE work (usthing workspace: issues/PRs/push
     # via gh as git credential helper; token arrives through the unit env).
-    environment.systemPackages = [ pkgs.gh ];
+    # bubblewrap — dsh-sandbox-local's preferred Linux confinement rung. The
+    # static landlock-run launcher is a release-time artifact the from-source
+    # slot build never produces, so without bwrap the runner chain probes
+    # empty and every confined call fails closed (SANDBOX_UNAVAILABLE).
+    environment.systemPackages = [ pkgs.gh pkgs.bubblewrap ];
 
     security.polkit.enable = true;
     security.polkit.extraConfig = ''
