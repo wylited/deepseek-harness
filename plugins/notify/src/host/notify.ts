@@ -17,12 +17,15 @@
  * @module notify/host/notify
  */
 
+import { join } from 'node:path'
 import {
   asAssistantMessage, asTitleEvent, asToolCall, asToolResult, asTurnEnd,
   messageText, type CredentialsFace, type GatewayFace, type LoggerFace,
   type SessionEventLike, type SessionLike,
 } from './faces.ts'
 import { buildEmbed, sendEmbeds, type NoticeEmbed } from './discord.ts'
+import { sendWebPush, type WebPushKeyMaterial } from './push.ts'
+import { loadSubscriptions, saveSubscriptions } from './push-store.ts'
 
 /** The ask-user tool name (`ASK_USER_QUESTION_TOOL`, packages/interaction/user-questions). */
 const ASK_USER_TOOL = 'ask_user_question'
@@ -52,6 +55,10 @@ interface PendingNotice extends NoticeEmbed {
   readonly callId: string | undefined
   /** Epoch ms when the delayed flush may send this entry. */
   readonly sendAt: number
+  /** Epoch ms when the (shorter-delay) web push may fire; 0 = push off. */
+  readonly pushAt: number
+  /** Set once the web push went out (Discord may still follow later). */
+  pushed: boolean
 }
 
 /** Per-session scratch: the newest assistant text and the newest title. */
@@ -67,6 +74,12 @@ export interface NotifyOptions {
   readonly delaySeconds: number
   readonly credential: string
   readonly siteUrl: string
+  /** Web Push: public VAPID key (base64url uncompressed point); '' = off. */
+  readonly pushPublicKey: string
+  /** Credential ref holding the VAPID private key (JWK `d`, base64url). */
+  readonly pushCredential: string
+  /** Push debounce (seconds); shorter than the Discord delay by design. */
+  readonly pushDelaySeconds: number
 }
 
 /** Services notify resolves lazily; any may be absent where it runs. */
@@ -251,20 +264,35 @@ export class NotifyService {
   // --- scheduling ------------------------------------------------------------
 
   /** Store (replacing any prior entry for the session) and arm the flush. */
-  private enqueue(session: SessionLike, notice: Omit<PendingNotice, 'sendAt'>): void {
-    // An attentive client shows the in-page toast — Discord stays silent.
+  private enqueue(session: SessionLike, notice: Omit<PendingNotice, 'sendAt' | 'pushAt' | 'pushed'>): void {
+    // An attentive client shows the in-page toast — push and Discord stay silent.
     if (this.hasAttentiveClient()) {
       this.services.logger.warn(`notify: suppressed ${notice.kind} for ${session.id} — attentive page reported (${String(this.attention.size)} tracked)`)
       return
     }
-    this.pending.set(session.id, { ...notice, sendAt: Date.now() + this.delayMs })
+    const pushMs = this.pushDelayMs
+    this.pending.set(session.id, {
+      ...notice,
+      sendAt: Date.now() + this.delayMs,
+      pushAt: pushMs > 0 ? Date.now() + pushMs : 0,
+      pushed: false,
+    })
     this.arm()
   }
 
-  /** Point the single flush timer at the earliest due entry. */
+  /** Clamped push debounce; 0 disables the push channel. */
+  private get pushDelayMs(): number {
+    if (this.options.pushPublicKey.length === 0 || this.options.pushCredential.length === 0) return 0
+    return Math.min(Math.max(Math.round(this.options.pushDelaySeconds), MIN_DELAY_SECONDS), MAX_DELAY_SECONDS) * 1000
+  }
+
+  /** Point the single flush timer at the earliest due entry (push or Discord). */
   private arm(): void {
     let earliest = Infinity
-    for (const entry of this.pending.values()) earliest = Math.min(earliest, entry.sendAt)
+    for (const entry of this.pending.values()) {
+      earliest = Math.min(earliest, entry.sendAt)
+      if (entry.pushAt > 0 && !entry.pushed) earliest = Math.min(earliest, entry.pushAt)
+    }
     if (earliest === Infinity) return
     const wait = Math.max(0, earliest - Date.now())
     clearTimeout(this.flushTimer)
@@ -275,12 +303,30 @@ export class NotifyService {
     this.flushTimer.unref?.()
   }
 
-  /** Send every due entry as one batched webhook call; rearm for the rest. */
+  /** Send due entries: web push first (short delay), then the Discord batch. */
   private async flush(): Promise<void> {
     const now = Date.now()
+    const pushDue: PendingNotice[] = []
+    for (const entry of this.pending.values()) {
+      if (entry.pushAt > 0 && !entry.pushed && entry.pushAt <= now) pushDue.push(entry)
+    }
+
+    // Push phase. A push carries the news early; the entry stays pending
+    // (marked pushed) until its Discord sendAt, so a tap-open that turns a
+    // page attentive suppresses the Discord ping.
+    if (pushDue.length > 0) {
+      if (this.hasAttentiveClient()) {
+        this.services.logger.warn(`notify: attentive page appeared during debounce; dropped ${String(pushDue.length)} notice(s) before push`)
+        for (const entry of pushDue) this.pending.delete(entry.sessionId)
+      } else {
+        await this.sendPushes(pushDue)
+      }
+    }
+
+    const now2 = Date.now()
     const due: PendingNotice[] = []
     for (const [id, entry] of this.pending) {
-      if (entry.sendAt <= now) {
+      if (entry.sendAt <= now2) {
         due.push(entry)
         this.pending.delete(id)
       }
@@ -289,7 +335,7 @@ export class NotifyService {
     if (due.length === 0) return
 
     // Re-check before send: a client that subscribed during the delay window
-    // cancels the send — the client toast already carried the news.
+    // cancels the send — the client toast (or the push) already carried the news.
     if (this.hasAttentiveClient()) {
       this.services.logger.warn(`notify: attentive page appeared during delay; dropped ${String(due.length)} Discord notice(s)`)
       return
@@ -310,6 +356,52 @@ export class NotifyService {
     const link = this.deepLink()
     const embeds = due.map(notice => buildEmbed(notice, link))
     await sendEmbeds(url, embeds, this.services.logger)
+  }
+
+  /** Fan a notice batch out to every stored push subscription; prune gone ones. */
+  private async sendPushes(notices: PendingNotice[]): Promise<void> {
+    const keys = await this.resolveVapid()
+    if (keys === undefined) return
+    for (const notice of notices) notice.pushed = true
+    const link = this.deepLink()
+    const subscriptions = loadSubscriptions(this.homePath())
+    if (subscriptions.length === 0) return
+    const alive: typeof subscriptions = []
+    for (const subscription of subscriptions) {
+      let gone = false
+      for (const notice of notices) {
+        const result = await sendWebPush(subscription, {
+          kind: notice.kind,
+          sessionId: notice.sessionId,
+          title: notice.title ?? 'dsh',
+          body: notice.text,
+          link,
+        }, keys)
+        if (result.gone) gone = true
+      }
+      if (!gone) alive.push(subscription)
+    }
+    if (alive.length !== subscriptions.length) saveSubscriptions(this.homePath(), alive)
+    this.services.logger.warn(`notify: pushed ${String(notices.length)} notice(s) to ${String(alive.length)} subscription(s)`)
+  }
+
+  /** The push-private credential + config public key, resolved per operation. */
+  private async resolveVapid(): Promise<WebPushKeyMaterial | undefined> {
+    if (this.options.pushPublicKey.length === 0) return undefined
+    const name = this.options.pushCredential
+    let value = ''
+    if (REF_PATTERN.test(name)) {
+      const resolved = await this.services.credentials?.resolve(name)
+      value = resolved?.value ?? ''
+    }
+    if (value.length === 0) value = process.env[name] ?? ''
+    if (value.length === 0) return undefined
+    return { publicKey: this.options.pushPublicKey, privateKey: value, subject: 'mailto:dsh@ts.wyli.tech' }
+  }
+
+  /** Push subscriptions live under the dsh home, outside any repo. */
+  private homePath(): string {
+    return process.env['DSH_HOME'] ?? join(process.env['HOME'] ?? '.', '.dsh')
   }
 
   /**

@@ -256,12 +256,17 @@ export function apply(ctx: NotifyContext): void {
   }
 
   // Request the browser-notification permission lazily, once, on first use —
-  // the existing DOM API; no new plumbing.
+  // the existing DOM API; no new plumbing. Grant also arms the web-push
+  // subscription (same permission on every shipping browser).
   let permissionAsked = false
   const askPermission = (): void => {
     if (permissionAsked || !('Notification' in window)) return
     permissionAsked = true
-    if (Notification.permission === 'default') void Notification.requestPermission()
+    if (Notification.permission === 'default') {
+      void Notification.requestPermission().then(granted => {
+        if (granted === 'granted') void setupPushSubscription(openSession)
+      })
+    }
   }
   ctx.effect(() => {
     document.addEventListener('pointerdown', askPermission, { once: true, capture: true })
@@ -330,6 +335,24 @@ export function apply(ctx: NotifyContext): void {
     }
   }, 'notify: forwarded feed')
 
+  // Permission already granted (previous visit): arm push right away.
+  if ('Notification' in window && Notification.permission === 'granted') {
+    void setupPushSubscription(openSession)
+  }
+
+  // Deep link from the service worker: a tapped notification focuses the app
+  // and opens the session it came from.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', event => {
+      const data: unknown = event.data
+      if (typeof data === 'object' && data !== null
+        && 'type' in data && data.type === 'dsh-notify-open'
+        && 'sessionId' in data && typeof data.sessionId === 'string' && data.sessionId.length > 0) {
+        openSession(data.sessionId)
+      }
+    })
+  }
+
   // Mount the overlay host last, so the queue exists before any event lands.
   ctx.effect(() => slots.inject('shell.overlay', () =>
     slots.register({
@@ -377,6 +400,63 @@ export function apply(ctx: NotifyContext): void {
       controller.abort()
     }
   }
+}
+
+/**
+ * Register the service worker and arm a web-push subscription for this
+ * browser. Fire-and-forget: any failure leaves local toasts + system
+ * notifications working; the host Discord channel is unaffected. Requires
+ * the deployment to configure `pushPublicKey` (the host route answers
+ * `supported: false` otherwise).
+ */
+async function setupPushSubscription(openSession: (sessionId: string) => void): Promise<void> {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return
+    if (location.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(location.hostname)) return
+    const keyResponse = await fetch('/api/notify/push-key', { headers: { accept: 'application/json' } })
+    if (!keyResponse.ok) return
+    const keyInfo: unknown = await keyResponse.json()
+    if (typeof keyInfo !== 'object' || keyInfo === null
+      || !('supported' in keyInfo) || keyInfo.supported !== true
+      || !('publicKey' in keyInfo) || typeof keyInfo.publicKey !== 'string' || keyInfo.publicKey.length === 0) {
+      return
+    }
+    const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    await navigator.serviceWorker.ready
+    const existing = await registration.pushManager.getSubscription()
+    const subscription = (existing !== null && existing.options.applicationServerKey !== undefined
+      && bytesToB64Url(new Uint8Array(existing.options.applicationServerKey as ArrayBuffer)) === keyInfo.publicKey)
+      ? existing
+      : await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(keyInfo.publicKey),
+        })
+    const response = await fetch('/api/notify/push-subscribe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ subscription: subscription.toJSON() }),
+    })
+    if (!response.ok) void subscription.unsubscribe()
+  } catch {
+    // Push is best-effort; in-page toasts remain the primary surface.
+  }
+}
+
+/** base64url → bytes for the VAPID applicationServerKey. */
+function urlB64ToUint8Array(base64Url: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64Url.length % 4)) % 4)
+  const base64 = `${base64Url}${padding}`.replaceAll('-', '+').replaceAll('_', '/')
+  const raw = atob(base64)
+  const output = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i += 1) output[i] = raw.charCodeAt(i)
+  return output
+}
+
+/** Bytes → base64url (comparing an existing subscription's key). */
+function bytesToB64Url(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
 }
 
 /** Read a service that may be absent (optional integration points). */

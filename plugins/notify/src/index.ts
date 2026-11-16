@@ -10,9 +10,11 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { join } from 'node:path'
 import z from '@deepseek-ai/schemastery'
 import { NotifyService, type NotifyServices } from './host/notify.ts'
 import { makeNotifyAttentionRoute } from './host/attention-route.ts'
+import { makePushRoutes } from './host/push-store.ts'
 import type { CredentialsFace, GatewayFace, LoggerFace, SessionEventsFace } from './host/faces.ts'
 
 /**
@@ -36,6 +38,12 @@ export interface Config {
   credential: string
   /** Explicit web-UI origin for the embed link; default is the advertised URL. */
   siteUrl: string
+  /** Web Push: public VAPID key (base64url); '' disables the push channel. */
+  pushPublicKey: string
+  /** Credential ref holding the VAPID private key (JWK `d`, base64url). */
+  pushCredential: string
+  /** Push debounce before the Discord delay, in seconds. */
+  pushDelaySeconds: number
 }
 
 export const Config = z.object({
@@ -43,7 +51,10 @@ export const Config = z.object({
   delaySeconds: z.number().default(45),
   credential: z.string().default('discord-notify'),
   siteUrl: z.string().default(''),
-}) as z<{ enabled?: boolean; delaySeconds?: number; credential?: string; siteUrl?: string }, Config>
+  pushPublicKey: z.string().default(''),
+  pushCredential: z.string().default('NOTIFY_VAPID_PRIVATE'),
+  pushDelaySeconds: z.number().default(10),
+}) as z<{ enabled?: boolean; delaySeconds?: number; credential?: string; siteUrl?: string; pushPublicKey?: string; pushCredential?: string; pushDelaySeconds?: number }, Config>
 
 /** Read a service that may be absent (optional integration points). */
 function tryGet<T>(ctx: Context, name: string): T | undefined {
@@ -73,6 +84,9 @@ export function apply(ctx: Context, config: Config): void {
     delaySeconds: config.delaySeconds,
     credential: config.credential,
     siteUrl: config.siteUrl,
+    pushPublicKey: config.pushPublicKey,
+    pushCredential: config.pushCredential,
+    pushDelaySeconds: config.pushDelaySeconds,
   }, services)
   const register: SessionEventsFace['on'] = (name, listener, options) =>
     (ctx as Context & SessionEventsFace).on(name, listener, options)
@@ -85,5 +99,14 @@ export function apply(ctx: Context, config: Config): void {
     const disposeAttention = webServer.register(makeNotifyAttentionRoute((pageId, focused) => service.setAttention(pageId, focused)))
     service.enableAttentionGate()
     if (disposeAttention !== undefined) ctx.effect(() => disposeAttention, 'notify: attention route')
+    // Web Push: subscription routes (public key + subscribe). The key is
+    // public by design; routes still sit behind the webserver's auth fence.
+    if (config.pushPublicKey.length > 0) {
+      const home = process.env['DSH_HOME'] ?? join(process.env['HOME'] ?? '.', '.dsh')
+      for (const route of makePushRoutes({ publicKey: config.pushPublicKey, homePath: home })) {
+        const dispose = webServer.register(route)
+        if (dispose !== undefined) ctx.effect(() => dispose, `notify: push route ${route.path}`)
+      }
+    }
   }
 }
