@@ -115,7 +115,7 @@ for (const vp of VIEWPORTS) {
       }
       for (const el of document.querySelectorAll('.wd-page, .wd-page *')) {
         const cs = getComputedStyle(el)
-        const scroller = el.classList.contains('wd-heat-scroll') || el.classList.contains('wd-tablewrap')
+        const scroller = el.classList.contains('wd-heat-scroll') || el.classList.contains('wd-tablewrap') || el.classList.contains('wd-grid-scroll')
         if (el.scrollWidth > el.clientWidth + 1 && !scroller && cs.textOverflow !== 'ellipsis') {
           overflows.push(`.${String(el.className).split(' ')[0] || el.tagName} ${el.scrollWidth}>${el.clientWidth} (${cs.overflowX})`)
         }
