@@ -108,7 +108,7 @@ export async function sendEmbeds(url: string, embeds: readonly Record<string, un
         logger.warn(`notify: discord webhook ${maskUrl(url)} answered ${String(response.status)}`)
         accepted = false
       } else {
-        logger.info(`notify: discord webhook ${maskUrl(url)} delivered ${String(chunk.length)} embed(s) [${String(response.status)}]`)
+        logger.warn(`notify: discord webhook ${maskUrl(url)} DELIVERED ${String(chunk.length)} embed(s) [${String(response.status)}]`)
       }
     } catch (error: unknown) {
       logger.warn(`notify: discord webhook ${maskUrl(url)} failed:`, error)
