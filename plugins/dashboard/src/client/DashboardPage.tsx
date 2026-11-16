@@ -27,7 +27,7 @@ import { compactTokens, fullTimeLabel, relativeTime } from './format.ts'
 import type { DashboardOverviewView, UsageDayPoint } from '../core/view.ts'
 import type { DashboardSummariesBody, DashboardSummaryReport } from '../core/summary.ts'
 import {
-  RECENT_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey,
+  RECENT_ROW_CAP, buildWorkspaceGroups, projectRows, useOptionalStore, workspaceKey, workspaceSlug,
   type AgentRow, type SessionsFace, type SessionsListState, type WorkspacesFace,
   type WorkspaceGroupNode, type WorkspaceTarget,
 } from './workspace.ts'
@@ -697,12 +697,26 @@ export function DashboardPage(face: DashboardFace) {
       .sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0) || b.updatedAt - a.updatedAt)
       .slice(0, RECENT_ROW_CAP)
     const recentIds = new Set(recent.map(row => row.sessionId))
+    const covered = groups.roots.filter(node => !subtreeRows(node).some(row => recentIds.has(row.sessionId)))
+    // Registry workspaces with no grouped node (no sessions at all) still
+    // belong in the grid as empty launchers.
+    const knownPaths = new Set([...covered, ...groups.roots].map(node => node.path).filter(Boolean))
+    const synthesized: WorkspaceGroupNode[] = (workspaces.items ?? [])
+      .filter(item => !knownPaths.has(item.path))
+      .map(item => ({
+        path: item.path,
+        label: item.title,
+        slug: workspaceSlug(item.title),
+        rows: [],
+        children: [],
+        activity: 0,
+      }))
     return {
       recentSessions: recent,
-      gridRoots: groups.roots.filter(node => !subtreeRows(node).some(row => recentIds.has(row.sessionId))),
+      gridRoots: [...covered, ...synthesized],
       runningWorkspaceCount: groups.roots.filter(node => subtreeRunningCount(node) > 0).length,
     }
-  }, [groups, rows])
+  }, [groups, rows, workspaces.items])
 
   // Cold model names arrive through the projections read (same RPC the
   // workspace list uses for cold titles); one attempt per session per mount.
@@ -878,7 +892,26 @@ function WorkspaceCard({ node, now, face, questions, summaries }: {
     ? sorted.find(row => row.running) ?? sorted[0]
     : sorted[0]
   const tail = useSessionTail(face, top?.sessionId ?? '', top !== undefined && runningCount > 0)
-  if (top === undefined) return null
+  if (top === undefined) {
+    // A workspace with no sessions still belongs in the grid: an openable
+    // card, not a hole.
+    return (
+      <button
+        type="button"
+        className="wd-gridcard"
+        onClick={() => {
+          if (node.path !== undefined) face.openWorkspace({ slug: node.slug, path: node.path, label: node.label })
+        }}
+        title={`${node.label} — no sessions yet`}
+      >
+        <span className="wd-gridcard-head">
+          <span className="wd-dot" aria-hidden="true" />
+          <span className="wd-gridcard-title">{node.label}</span>
+        </span>
+        <span className="wd-gridcard-status">empty · open to start an agent</span>
+      </button>
+    )
+  }
   const needsYou = sorted.some(row => questions.get(row.sessionId) !== undefined)
   const summary = runningCount > 0 ? undefined : summaries.get(top.sessionId)
   const status = runningCount > 0
