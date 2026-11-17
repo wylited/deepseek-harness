@@ -27,6 +27,7 @@ import type { CodeToolbarLabels } from '../CodeToolbar.tsx'
 import { CodeBlock } from './CodeBlock.tsx'
 import { isExplicitFilePath, parseFileLink } from './file-link.ts'
 import { renderTexToReact } from './katex.tsx'
+import { MermaidDiagram } from './MermaidDiagram.tsx'
 import { LinkIconMedium, classifyLinkPath } from '../LinkIcon.tsx'
 import { useMarkdownDelegate } from './MarkdownDelegate.tsx'
 import { HoverCard } from '../HoverCard.tsx'
@@ -432,6 +433,11 @@ function renderCode(node: Md.Code, key: Key, context: MarkdownRenderContext): Re
     // ```math fences render as display TeX once settled (rehype-katex parity);
     // its text extraction saw the code block's trailing newline.
     return <Fragment key={key}>{renderTexToReact(`${node.value}\n`, true)}</Fragment>
+  }
+  if (!context.streaming && lang === 'mermaid') {
+    // ```mermaid fences render as the live diagram once settled; the streaming
+    // arm keeps the literal CodeBlock below so the growing source stays visible.
+    return <MermaidDiagram key={key} code={node.value} />
   }
   return (
     <CodeBlock

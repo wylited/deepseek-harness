@@ -1,0 +1,34 @@
+/* mermaid writes inline width/height onto its SVG; a narrow message therefore
+   scrolls sideways rather than shrinking the labels past legibility. */
+.diagram {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.diagram svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+/* Reserve roughly a settled diagram's height so the message does not jump
+   when the SVG replaces this box. */
+.placeholder {
+  min-height: 120px;
+  background: var(--surface);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  opacity: .5;
+}
+
+/* Render failure keeps the fence text visible in the code-block look. */
+.fallback {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-family: var(--dsw-font-markdown-code, monospace);
+  font-size: inherit;
+}
