@@ -24,8 +24,6 @@ import { DocumentTitle } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
-/** Screen-edge start zone that arms a drawer swipe (touch only). */
-const SWIPE_EDGE_ZONE = 24
 /** Travel past which an armed horizontal swipe commits to open/close. */
 const SWIPE_COMMIT = 60
 /** Movement past which the gesture's dominant axis is decided. */
@@ -266,24 +264,20 @@ export function AppFrame({
     actions.setRightbar(rightbarBase.current - dx)
   }, [actions])
 
-  // Touch edge-swipe drawer gestures, armed only for coarse pointers in
-  // drawer mode. Gestures arm from a ~24px screen-edge start so the
-  // conversation's own horizontal scrolls and carousels are untouched, and
-  // commit only on a horizontal-dominant swipe past the threshold. Handlers
+  // Touch swipe drawer gestures, armed only for coarse pointers in drawer
+  // mode. A swipe may start anywhere on the screen; the horizontal direction
+  // decides the side: right opens the sidebar (or closes an open right
+  // panel), left opens the right panel (or closes an open sidebar). A
+  // vertical-dominant movement disarms so scrolling is untouched. Handlers
   // stay passive: no preventDefault, touch-action untouched.
   const coarsePointer = useMemo(() => window.matchMedia('(pointer: coarse)').matches, [])
   const swipeArmed = drawer && coarsePointer
-  const swipe = useRef<{ edge: 'left' | 'right'; x: number; y: number } | null>(null)
+  const swipe = useRef<{ x: number; y: number } | null>(null)
   const onFrameTouchStart = useCallback((event: TouchEvent<HTMLDivElement>) => {
     swipe.current = null
     if (!swipeArmed || event.touches.length !== 1) return
     const touch = event.touches[0]
-    if (touch === undefined) return
-    const width = frameRef.current?.clientWidth ?? 0
-    if (touch.clientX <= SWIPE_EDGE_ZONE) swipe.current = { edge: 'left', x: touch.clientX, y: touch.clientY }
-    else if (width > 0 && touch.clientX >= width - SWIPE_EDGE_ZONE) {
-      swipe.current = { edge: 'right', x: touch.clientX, y: touch.clientY }
-    }
+    if (touch !== undefined) swipe.current = { x: touch.clientX, y: touch.clientY }
   }, [swipeArmed])
   const onFrameTouchMove = useCallback((event: TouchEvent<HTMLDivElement>) => {
     const armed = swipe.current
@@ -305,15 +299,14 @@ export function AppFrame({
     if (ended === undefined) return
     const dx = ended.clientX - armed.x
     if (Math.abs(dx) < SWIPE_COMMIT) return
-    if (armed.edge === 'left') {
-      // Swiping right from the left edge opens the drawer; the opposite
-      // direction over an open drawer closes it (toggleSidebar flips
-      // narrowExpanded below the auto-collapse width).
-      if ((dx > 0 && sidebarCollapsed) || (dx < 0 && drawerOpen)) actions.toggleSidebar()
-    } else if (dx < 0 && !layoutInfo.rightbarShown) {
-      actions.openRightbar(false, false)
-    } else if (dx > 0 && layoutInfo.rightbarShown) {
-      actions.closeRightbar()
+    if (dx > 0) {
+      // Swipe right: close an open right panel first, else open the sidebar.
+      if (layoutInfo.rightbarShown) actions.closeRightbar()
+      else if (sidebarCollapsed) actions.toggleSidebar()
+    } else {
+      // Swipe left: close an open sidebar first, else open the right panel.
+      if (drawerOpen) actions.toggleSidebar()
+      else if (!layoutInfo.rightbarShown) actions.openRightbar(false, false)
     }
   }, [actions, sidebarCollapsed, drawerOpen, layoutInfo.rightbarShown])
   const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
