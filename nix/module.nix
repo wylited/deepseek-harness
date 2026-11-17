@@ -766,18 +766,26 @@ ${lib.concatStringsSep "\n" (map (h: "          - ${h}") cfg.trustedHosts)}
     systemctl stop "dsh@$active"
 
     # --- flip verification -------------------------------------------------------
-    # The old slot is retired; re-verify the new active slot directly 3x
-    # over ~5s. Any failure: restart the OLD slot (its tree was never
-    # touched), stop the new one, restore .active-slot.
-    verify_failed=
-    for attempt in 1 2 3; do
-      code=$(${pkgs.curl}/bin/curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$idlePort/" || true)
-      if [ "$code" != "200" ]; then
-        echo "dsh-update: flip verification $attempt/3 failed (HTTP ''${code:-none})" >&2
-        verify_failed=1
+    # The old slot is retired; the new one must answer `/` with 200 before the
+    # flip stands. A freshly booted slot serves `/` with 404 for a moment while
+    # its client assets warm (observed 1.4 s here, longer while the update's
+    # own build still holds the machine), and the previous fail-on-first-probe
+    # policy turned that warm-up into a rollback: 2026-11-17 rolled back twice
+    # with HTTP 000 on a slot that answered in 3 ms a second later. So poll
+    # every 2 s for up to ~40 s and pass on the FIRST 200; only a slot that
+    # never gets there is unhealthy. Failure: restart the OLD slot (its tree
+    # was never touched), stop the new one, restore .active-slot.
+    verify_failed=1
+    attempt=0
+    while [ "$attempt" -lt 20 ]; do
+      attempt=$((attempt + 1))
+      code=$(${pkgs.curl}/bin/curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$idlePort/" || true)
+      if [ "$code" = "200" ]; then
+        verify_failed=
         break
       fi
-      [ "$attempt" -eq 3 ] || sleep 2
+      echo "dsh-update: flip verification $attempt/20 not ready (HTTP ''${code:-none})" >&2
+      sleep 2
     done
     if [ -n "$verify_failed" ]; then
       echo "dsh-update: flip failed; ROLLING BACK to dsh@$active" >&2
