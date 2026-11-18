@@ -37,13 +37,11 @@
 # BOTH ports with active health checks (fleet ingress module), so the flip
 # itself never drops the vhost.
 #
-# Keys: providers resolve apiKeyEnv (ZAI_API_KEY) from the process
+# Keys: providers resolve apiKeyEnv (OPENCODE_API_KEY) from the process
 # environment, so /etc/nix/dsh-env (EnvironmentFile, optional) supplies them:
 #
 #   # /etc/nix/dsh-env  (root:root 0600)
-#   ZAI_API_KEY=...                 # zai + zcode rows both read this
-#   ZCODE_API_KEY=...               # reserved (profile rows currently map
-#                                   # zcode to ZAI_API_KEY as on the mac)
+#   OPENCODE_API_KEY=...            # opencode-go route (DeepSeek V4.1 Flash)
 #   PERPLEXITY_SESSION_TOKEN=...    # perplexity-web plugin
 #
 # The service starts fine without the file (degraded providers).
@@ -181,7 +179,7 @@ let
   #   - connection row: tokenless admission inside the tailnet — authMode
   #     trust-network + trustedHosts restated (patch rows REPLACE the whole
   #     config; a bare host entry matches any port).
-  #   - agent default model zcode/glm-5.3-flashx, same as the mac.
+  #   - agent default model opencode-go/deepseek-v4.1-flash.
   # Provider keys are NOT here: apiKeyEnv rows resolve from the process
   # environment (EnvironmentFile /etc/nix/dsh-env).
   profilePatch = pkgs.writeText "dsh-profile-cordis.patch.yml" ''
@@ -196,95 +194,17 @@ let
     - id: llm-pi-ai
       config:
         providers:
-          zai:
-            displayName: Z.ai
-            apiKeyEnv: ZAI_API_KEY
-            api: openai-completions
-            baseURL: https://api.z.ai/api/coding/paas/v4
-            # Standard OpenAI request shape: system role, max_tokens cap. dsh's
-            # provider guide starts unknown OpenAI-compatible gateways here.
-            compat:
-              supportsDeveloperRole: false
-              maxTokensField: max_tokens
-            # Reasoning efforts per model. The zai gateway takes thinkingFormat:
-            # zai — inherited from the installed catalog for glm-5.3 and
-            # glm-5.3-flash, restated on glm-5.3-flashx (absent from the catalog,
-            # so it also declares the siblings' compat; zaiToolStream stays
-            # catalog-withheld). "off" sends thinking {type: disabled}; every
-            # thinking level sends reasoning_effort <spelling>. Both shapes
-            # verified live against api.z.ai (200).
+          opencode-go:
+            displayName: OpenCode Go
+            apiKeyEnv: OPENCODE_API_KEY
+            # Installed pi-ai catalog route: baseURL, API surface, compat, and
+            # thinkingLevelMap come from the catalog entry; models narrows the
+            # route to this one model.
             models:
-              - id: glm-5.3
-                name: GLM-5.3
+              - id: deepseek-v4.1-flash
+                name: DeepSeek V4.1 Flash 1017
                 contextWindow: 1000000
-                maxTokens: 131072
-                input: [ text ]
-                reasoningEfforts:
-                  off:
-                  low: low
-                  high: high
-                  max: max
-              - id: glm-5.3-flash
-                name: GLM-5.3 Flash
-                contextWindow: 1000000
-                maxTokens: 131072
-                input: [ text, image ]
-                reasoningEfforts:
-                  off:
-                  low: low
-                  high: high
-                  max: max
-              - id: glm-5.3-flashx
-                name: GLM-5.3 FlashX
-                contextWindow: 1000000
-                maxTokens: 131072
-                input: [ text, image ]
-                compat:
-                  supportsStore: false
-                  supportsReasoningEffort: true
-                  thinkingFormat: zai
-                  supportsStrictMode: true
-                reasoningEfforts:
-                  off:
-                  low: low
-                  high: high
-                  max: max
-          zcode:
-            displayName: ZCode
-            apiKeyEnv: ZAI_API_KEY
-            api: anthropic-messages
-            baseURL: https://zcode.z.ai/api/v1/ultra-zai/anthropic
-            # Anthropic surface: "off" sends thinking {type: disabled} (verified
-            # live against zcode.z.ai, 200); low/high/max ride the extended-
-            # thinking budget path (2048/16384/16384 tokens — pi-ai clamps max to
-            # high unless profile thinkingBudgets say otherwise), and the
-            # spellings double as adaptive-effort names should
-            # forceAdaptiveThinking ever be set.
-            models:
-              - id: glm-5.3
-                name: GLM-5.3 (ZCode)
-                contextWindow: 1000000
-                maxTokens: 128000
-                input: [ text ]
-                reasoningEfforts:
-                  off:
-                  low: low
-                  high: high
-                  max: max
-              - id: glm-5.3-flash
-                name: GLM-5.3 Flash (ZCode)
-                contextWindow: 204800
-                maxTokens: 131072
-                input: [ text, image ]
-                reasoningEfforts:
-                  off:
-                  low: low
-                  high: high
-                  max: max
-              - id: glm-5.3-flashx
-                name: GLM-5.3 FlashX (ZCode)
-                contextWindow: 1000000
-                maxTokens: 131072
+                maxTokens: 384000
                 input: [ text, image ]
                 reasoningEfforts:
                   off:
@@ -292,13 +212,12 @@ let
                   high: high
                   max: max
 
-    # Default route for new agents: glm-5.3-flashx via zcode. dsh has no
-    # cross-provider fallback (recon-verified) — same-provider retry only, via
-    # llm-retry; a zcode outage is never silently rerouted to zai.
+    # Default route for new agents. dsh has no cross-provider fallback
+    # (recon-verified) — same-provider retry only, via llm-retry.
     - id: agent-default-model
       config:
-        provider: zcode
-        model: glm-5.3-flashx
+        provider: opencode-go
+        model: deepseek-v4.1-flash
 
     # Auto-compaction: summarize + truncate at ~30% context pressure.
     # thresholdRatio is the knob (0.2 compacts early, 0.5 late); the verbatim

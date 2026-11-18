@@ -44,7 +44,7 @@ Prod layout on warden, all under `/var/lib/dsh`:
   instance config.
 - `.ssh/` — deploy keys. NEVER leave the machine's context.
 - Secrets live OUTSIDE the repo: `/etc/nix/dsh-env` (root-only 0600
-  EnvironmentFile: `ZAI_API_KEY`, `PERPLEXITY_JWT`).
+  EnvironmentFile: `OPENCODE_API_KEY`, `PERPLEXITY_JWT`).
 
 ## Self-redeploy loop (source-only changes)
 

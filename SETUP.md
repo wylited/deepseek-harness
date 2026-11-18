@@ -22,17 +22,16 @@ cache all live under `.dsh-home/`; nothing is written to `~/.dsh` or
 `~/.config/dsh`.
 
 **Providers** — `.dsh-home/profiles/headless/cordis.patch.yml` configures the
-`llm-pi-ai` plugin with two routes, `zai` (openai-completions, api.z.ai coding
-endpoint) and `zcode` (anthropic-messages, zcode.z.ai), each serving
-glm-5.3 / glm-5.3-flash / glm-5.3-flashx; `agent-default-model` pins
-glm-5.3-flashx via `zai`. The shared API key lives in `.dsh-home/.env` as
-`ZAI_API_KEY` and is resolved per request from the env layer — no secret sits
-in YAML.
+`llm-pi-ai` plugin with the `opencode-go` route (pi-ai catalog endpoint,
+openai-completions) narrowed to a single model, `deepseek-v4.1-flash`
+(DeepSeek V4.1 Flash 1017); `agent-default-model` pins it. The API key lives
+in `.dsh-home/.env` as `OPENCODE_API_KEY` and is resolved per request from the
+env layer — no secret sits in YAML.
 
 **Web UI** — `./dsh web --no-open` starts the interactive UI on
-`http://127.0.0.1:3080` from `.dsh-home/profiles/web/` (same two provider rows
-and default model as headless; verified via `--dump-config` to change exactly
-those two rows vs the stock web template). The server authenticates every
+`http://127.0.0.1:3080` from `.dsh-home/profiles/web/` (the same `opencode-go`
+route plus the local LiteLLM/glm routes; verified via `--dump-config`). The
+server authenticates every
 request: bare `GET /` returns 401; open the tokenized URL printed at startup
 (`dsh web: http://127.0.0.1:3080/?token=…`) in a browser, which exchanges the
 token for a session cookie.
@@ -107,7 +106,7 @@ fleet input `github:wylited/deepseek-harness/wyli`):
   `node/` a pinned node v24.9.0 (the native addon rejects ≥24.21),
   `home/` is `DSH_HOME` (profile, sessions, ledger).
 - **API keys**: `ssh warden sudoedit /etc/nix/dsh-env` — fill
-  `ZAI_API_KEY=` / `ZCODE_API_KEY=` (and optionally
+  `OPENCODE_API_KEY=` (and optionally
   `PERPLEXITY_SESSION_TOKEN=` for the perplexity-web plugin), then
   `sudo systemctl restart dsh`. The service starts fine without keys
   (providers degraded) — the file is optional (`EnvironmentFile=-`).
